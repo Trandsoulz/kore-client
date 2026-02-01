@@ -28,7 +28,7 @@ interface ProfileFormData {
 export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   const router = useRouter();
   const { user, completeProfile, updateUser } = useAuthStore();
-  const { banks, isLoading: banksLoading } = useBanks();
+  const { banks, isLoading: banksLoading, error: banksError, refresh: refreshBanks } = useBanks();
   
   const [step, setStep] = useState<1 | 2>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -348,6 +348,7 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                 <label className="block text-sm font-medium text-foreground mb-2">
                   Bank Name
                 </label>
+                {/* Banks list endpoint: https://koreapi.onrender.com/api/banks/ */}
                 <select
                   value={formData.bankName}
                   onChange={(e) => handleBankChange(e.target.value)}
@@ -362,6 +363,17 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                   ))}
                 </select>
                 {errors.bankName && <p className="text-red-500 text-xs mt-1">{errors.bankName}</p>}
+                {banksError && (
+                  <div className="mt-2 flex items-center gap-2 text-sm text-red-500">
+                    <p>Failed to load banks.</p>
+                    <button
+                      onClick={refreshBanks}
+                      className="underline text-red-500 hover:text-red-700"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div>

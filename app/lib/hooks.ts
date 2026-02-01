@@ -10,23 +10,26 @@ export function useBanks() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchBanks = async () => {
-      try {
-        setIsLoading(true);
-        const data = await banksApi.getBanks();
-        setBanks(data);
-        setError(null);
-      } catch (err) {
-        setError("Failed to load banks");
-        console.error("Failed to fetch banks:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Banks API endpoint: https://koreapi.onrender.com/api/banks/
+  // Note: `banksApi.getBanks()` calls this endpoint via the shared API client (`app/lib/api.ts`).
+  // The hook below fetches banks using that helper and exposes a `refresh` function.
+  const fetchBanks = async () => {
+    try {
+      setIsLoading(true);
+      const data = await banksApi.getBanks();
+      setBanks(data);
+      setError(null);
+    } catch (err) {
+      setError("Failed to load banks");
+      console.error("Failed to fetch banks:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchBanks();
   }, []);
 
-  return { banks, isLoading, error };
+  return { banks, isLoading, error, refresh: fetchBanks };
 }
