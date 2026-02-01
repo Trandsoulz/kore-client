@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/app/store/auth";
 import { useRulesStore } from "@/app/store/rules";
+import { getAccessToken } from "@/app/lib/api";
 import Sidebar from "./components/Sidebar";
 import DashboardHeader from "./components/DashboardHeader";
 import ProfileModal from "./components/ProfileModal";
@@ -15,11 +16,12 @@ export default function DashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, isAuthenticated } = useAuthStore();
+  const { user, isAuthenticated, fetchCurrentUser, logout } = useAuthStore();
   const { onboardingComplete } = useRulesStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [isValidating, setIsValidating] = useState(true);
 
   const isOnboardingPage = pathname === "/dashboard/onboarding";
 
@@ -27,11 +29,42 @@ export default function DashboardLayout({
     setMounted(true);
   }, []);
 
+  // Validate authentication on mount
   useEffect(() => {
-    if (mounted && !isAuthenticated) {
+    const validateAuth = async () => {
+      const token = getAccessToken();
+      
+      if (!token) {
+        logout();
+        router.push("/login");
+        return;
+      }
+
+      if (isAuthenticated && user) {
+        // Refresh user data from API
+        try {
+          await fetchCurrentUser();
+        } catch {
+          // Token invalid, redirect to login
+          logout();
+          router.push("/login");
+          return;
+        }
+      }
+      
+      setIsValidating(false);
+    };
+
+    if (mounted) {
+      validateAuth();
+    }
+  }, [mounted, isAuthenticated, user, fetchCurrentUser, logout, router]);
+
+  useEffect(() => {
+    if (mounted && !isValidating && !isAuthenticated) {
       router.push("/login");
     }
-  }, [mounted, isAuthenticated, router]);
+  }, [mounted, isValidating, isAuthenticated, router]);
 
   useEffect(() => {
     // Show profile modal if profile is not complete
@@ -44,12 +77,12 @@ export default function DashboardLayout({
 
   // Redirect to onboarding if profile is complete but rules are not set
   useEffect(() => {
-    if (mounted && user?.profileComplete && !onboardingComplete && !isOnboardingPage) {
+    if (mounted && !isValidating && user?.profileComplete && !onboardingComplete && !isOnboardingPage) {
       router.push("/dashboard/onboarding");
     }
-  }, [mounted, user?.profileComplete, onboardingComplete, isOnboardingPage, router]);
+  }, [mounted, isValidating, user?.profileComplete, onboardingComplete, isOnboardingPage, router]);
 
-  if (!mounted || !isAuthenticated) {
+  if (!mounted || isValidating || !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />

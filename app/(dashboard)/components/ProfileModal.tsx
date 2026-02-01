@@ -1,54 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { X, User, Building2, ChevronRight, Check } from "lucide-react";
+import { X, User, Building2, ChevronRight, Check, AlertCircle, Loader2 } from "lucide-react";
 import { useAuthStore, UserProfile } from "@/app/store/auth";
+import { useBanks } from "@/app/lib/hooks";
+import { profileApi, type ApiError } from "@/app/lib/api";
 
 interface ProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const nigerianBanks = [
-  "Access Bank",
-  "First Bank",
-  "GTBank",
-  "UBA",
-  "Zenith Bank",
-  "Stanbic IBTC",
-  "Fidelity Bank",
-  "Union Bank",
-  "Sterling Bank",
-  "Wema Bank",
-  "Polaris Bank",
-  "Keystone Bank",
-  "FCMB",
-  "Ecobank",
-  "Citibank",
-];
+// Form data structure (frontend format)
+interface ProfileFormData {
+  firstName: string;
+  surname: string;
+  dob: string;
+  gender: string;
+  phone: string;
+  bvn: string;
+  bankName: string;
+  bankCode: string;
+  accountNumber: string;
+}
 
 export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   const router = useRouter();
-  const { user, completeProfile } = useAuthStore();
+  const { user, completeProfile, updateUser } = useAuthStore();
+  const { banks, isLoading: banksLoading } = useBanks();
+  
   const [step, setStep] = useState<1 | 2>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [formData, setFormData] = useState<UserProfile>({
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<"idle" | "verifying" | "success" | "failed">("idle");
+  
+  const [formData, setFormData] = useState<ProfileFormData>({
+    firstName: "",
+    surname: "",
     dob: "",
     gender: "",
     phone: "",
-    address: "",
     bvn: "",
     bankName: "",
+    bankCode: "",
     accountNumber: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Parse user name into first name and surname on mount
+  useEffect(() => {
+    if (user?.name) {
+      const nameParts = user.name.trim().split(" ");
+      const firstName = nameParts[0] || "";
+      const surname = nameParts.slice(1).join(" ") || "";
+      setFormData(prev => ({ ...prev, firstName, surname }));
+    }
+  }, [user?.name]);
 
   if (!isOpen) return null;
 
   const validateStep1 = () => {
     const newErrors: Record<string, string> = {};
 
+    if (!formData.firstName.trim()) newErrors.firstName = "First name is required";
+    if (!formData.surname.trim()) newErrors.surname = "Surname is required";
     if (!formData.dob) newErrors.dob = "Date of birth is required";
     if (!formData.gender) newErrors.gender = "Gender is required";
     if (!formData.phone) {
@@ -56,7 +72,6 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     } else if (!/^0[789]\d{9}$/.test(formData.phone)) {
       newErrors.phone = "Enter a valid Nigerian phone number";
     }
-    if (!formData.address) newErrors.address = "Address is required";
     if (!formData.bvn) {
       newErrors.bvn = "BVN is required";
     } else if (!/^\d{11}$/.test(formData.bvn)) {
@@ -81,9 +96,37 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleNext = () => {
-    if (validateStep1()) {
+  const handleBankChange = (bankName: string) => {
+    const selectedBank = banks.find(b => b.name === bankName);
+    setFormData({
+      ...formData,
+      bankName,
+      bankCode: selectedBank?.code || "",
+    });
+  };
+
+  const handleNext = async () => {
+    if (!validateStep1()) return;
+
+    setIsSubmitting(true);
+    setApiError(null);
+
+    try {
+      // Save personal info to backend (draft)
+      await profileApi.updatePersonalInfo({
+        first_name: formData.firstName,
+        surname: formData.surname,
+        phone_number: formData.phone,
+        date_of_birth: formData.dob,
+        gender: formData.gender === "male" ? "M" : formData.gender === "female" ? "F" : "O",
+      });
+      
       setStep(2);
+    } catch (err) {
+      const error = err as ApiError;
+      setApiError(error.message || "Failed to save personal information");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -91,20 +134,56 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     if (!validateStep2()) return;
 
     setIsSubmitting(true);
-    
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    
-    completeProfile(formData);
-    setIsSubmitting(false);
-    
-    // Redirect to onboarding (rules engine) first, then close modal
-    router.push("/dashboard/onboarding");
-    
-    // Small delay to ensure navigation starts before modal closes
-    setTimeout(() => {
-      onClose();
-    }, 100);
+    setApiError(null);
+    setVerificationStatus("verifying");
+
+    try {
+      // Save bank info to backend (draft)
+      await profileApi.updateBankInfo({
+        account_number: formData.accountNumber,
+        bank_name: formData.bankName,
+        bank_code: formData.bankCode,
+        bvn: formData.bvn,
+      });
+
+      // Submit for verification with OnePipe
+      const result = await profileApi.submitProfile();
+
+      if (result.status === "verified") {
+        setVerificationStatus("success");
+        
+        // Update local state
+        const profile: UserProfile = {
+          firstName: formData.firstName,
+          surname: formData.surname,
+          dob: formData.dob,
+          gender: formData.gender,
+          phone: formData.phone,
+          bvn: "", // Don't store locally
+          bankName: formData.bankName,
+          bankCode: formData.bankCode,
+          accountNumber: "", // Don't store locally
+        };
+        
+        completeProfile(profile);
+        updateUser({ profileComplete: true });
+        
+        // Redirect to onboarding after short delay
+        setTimeout(() => {
+          router.push("/dashboard/onboarding");
+          onClose();
+        }, 1500);
+      } else {
+        setVerificationStatus("failed");
+        setApiError(result.message || "Bank verification failed. Please check your details.");
+      }
+    } catch (err) {
+      const error = err as ApiError;
+      setVerificationStatus("failed");
+      setApiError(error.message || "Verification failed. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -113,7 +192,7 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
       {/* Modal */}
-      <div className="relative w-full max-w-lg bg-background border border-border rounded-2xl shadow-2xl overflow-hidden">
+      <div className="relative w-full max-w-lg bg-background border border-border rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border">
           <div>
@@ -138,6 +217,14 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
           </div>
         </div>
 
+        {/* API Error Display */}
+        {apiError && (
+          <div className="mx-6 mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-2">
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <p className="text-red-500 text-sm">{apiError}</p>
+          </div>
+        )}
+
         {/* Content */}
         <div className="p-6 space-y-5">
           {step === 1 ? (
@@ -150,6 +237,36 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                 <div>
                   <p className="font-medium text-foreground">{user?.name}</p>
                   <p className="text-sm text-muted">{user?.email}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    First Name
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.firstName}
+                    onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                    placeholder="John"
+                    className={`w-full px-4 py-3 bg-background border ${errors.firstName ? "border-red-500" : "border-border"} rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
+                  />
+                  {errors.firstName && <p className="text-red-500 text-xs mt-1">{errors.firstName}</p>}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    Surname
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.surname}
+                    onChange={(e) => setFormData({ ...formData, surname: e.target.value })}
+                    placeholder="Doe"
+                    className={`w-full px-4 py-3 bg-background border ${errors.surname ? "border-red-500" : "border-border"} rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
+                  />
+                  {errors.surname && <p className="text-red-500 text-xs mt-1">{errors.surname}</p>}
                 </div>
               </div>
 
@@ -179,6 +296,7 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                     <option value="">Select</option>
                     <option value="male">Male</option>
                     <option value="female">Female</option>
+                    <option value="other">Other</option>
                   </select>
                   {errors.gender && <p className="text-red-500 text-xs mt-1">{errors.gender}</p>}
                 </div>
@@ -196,20 +314,6 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                   className={`w-full px-4 py-3 bg-background border ${errors.phone ? "border-red-500" : "border-border"} rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
                 />
                 {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Residential Address
-                </label>
-                <input
-                  type="text"
-                  value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                  placeholder="123 Main Street, Lagos"
-                  className={`w-full px-4 py-3 bg-background border ${errors.address ? "border-red-500" : "border-border"} rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
-                />
-                {errors.address && <p className="text-red-500 text-xs mt-1">{errors.address}</p>}
               </div>
 
               <div>
@@ -246,13 +350,14 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                 </label>
                 <select
                   value={formData.bankName}
-                  onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
-                  className={`w-full px-4 py-3 bg-background border ${errors.bankName ? "border-red-500" : "border-border"} rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
+                  onChange={(e) => handleBankChange(e.target.value)}
+                  disabled={banksLoading}
+                  className={`w-full px-4 py-3 bg-background border ${errors.bankName ? "border-red-500" : "border-border"} rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50`}
                 >
-                  <option value="">Select your bank</option>
-                  {nigerianBanks.map((bank) => (
-                    <option key={bank} value={bank}>
-                      {bank}
+                  <option value="">{banksLoading ? "Loading banks..." : "Select your bank"}</option>
+                  {banks.map((bank) => (
+                    <option key={bank.code} value={bank.name}>
+                      {bank.name}
                     </option>
                   ))}
                 </select>
@@ -273,14 +378,39 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                 {errors.accountNumber && <p className="text-red-500 text-xs mt-1">{errors.accountNumber}</p>}
               </div>
 
-              {formData.bankName && formData.accountNumber.length === 10 && (
+              {/* Verification Status */}
+              {verificationStatus === "verifying" && (
+                <div className="p-4 bg-primary/5 border border-primary/20 rounded-xl">
+                  <div className="flex items-center gap-2 text-primary">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span className="font-medium">Verifying your bank account...</span>
+                  </div>
+                  <p className="text-sm text-muted mt-1">
+                    This may take a few seconds
+                  </p>
+                </div>
+              )}
+
+              {verificationStatus === "success" && (
                 <div className="p-4 bg-secondary/5 border border-secondary/20 rounded-xl">
                   <div className="flex items-center gap-2 text-secondary">
                     <Check className="w-5 h-5" />
-                    <span className="font-medium">Account Verified</span>
+                    <span className="font-medium">Account Verified Successfully!</span>
                   </div>
                   <p className="text-sm text-muted mt-1">
-                    {user?.name?.toUpperCase()} - {formData.bankName}
+                    Redirecting to onboarding...
+                  </p>
+                </div>
+              )}
+
+              {verificationStatus === "failed" && (
+                <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-xl">
+                  <div className="flex items-center gap-2 text-red-500">
+                    <AlertCircle className="w-5 h-5" />
+                    <span className="font-medium">Verification Failed</span>
+                  </div>
+                  <p className="text-sm text-muted mt-1">
+                    Please check your details and try again
                   </p>
                 </div>
               )}
@@ -292,8 +422,13 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
         <div className="flex items-center justify-between p-6 border-t border-border bg-card/50">
           {step === 2 ? (
             <button
-              onClick={() => setStep(1)}
-              className="px-6 py-2.5 text-muted hover:text-foreground font-medium transition-colors"
+              onClick={() => {
+                setStep(1);
+                setVerificationStatus("idle");
+                setApiError(null);
+              }}
+              disabled={isSubmitting || verificationStatus === "success"}
+              className="px-6 py-2.5 text-muted hover:text-foreground font-medium transition-colors disabled:opacity-50"
             >
               Back
             </button>
@@ -304,22 +439,29 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
           {step === 1 ? (
             <button
               onClick={handleNext}
-              className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-semibold transition-colors"
-            >
-              Continue
-              <ChevronRight className="w-5 h-5" />
-            </button>
-          ) : (
-            <button
-              onClick={handleSubmit}
               disabled={isSubmitting}
               className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-semibold transition-colors disabled:opacity-50"
             >
               {isSubmitting ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  Complete Setup
+                  Continue
+                  <ChevronRight className="w-5 h-5" />
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={isSubmitting || verificationStatus === "success"}
+              className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-semibold transition-colors disabled:opacity-50"
+            >
+              {isSubmitting ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <>
+                  Verify & Complete
                   <Check className="w-5 h-5" />
                 </>
               )}

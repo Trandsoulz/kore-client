@@ -8,13 +8,15 @@ import { useAuthStore } from "@/app/store/auth";
 
 export default function SignupPage() {
   const router = useRouter();
-  const { login, setLoading, isLoading } = useAuthStore();
+  const { signup, isLoading, error, setError } = useAuthStore();
   
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
     password: "",
+    confirmPassword: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -36,6 +38,12 @@ export default function SignupPage() {
     } else if (formData.password.length < 8) {
       newErrors.password = "Password must be at least 8 characters";
     }
+
+    if (!formData.confirmPassword) {
+      newErrors.confirmPassword = "Please confirm your password";
+    } else if (formData.password !== formData.confirmPassword) {
+      newErrors.confirmPassword = "Passwords do not match";
+    }
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -43,31 +51,21 @@ export default function SignupPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     
     if (!validateForm()) return;
     
-    setLoading(true);
-    
-    // Simulate API call - replace with actual API
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    
-    // Mock user creation
-    login({
-      id: crypto.randomUUID(),
-      name: formData.name,
-      email: formData.email,
-      profileComplete: false,
-    });
-    
-    setLoading(false);
-    router.push("/dashboard");
+    try {
+      await signup(formData.name, formData.email, formData.password, formData.confirmPassword);
+      router.push("/dashboard");
+    } catch {
+      // Error is already set in the store
+    }
   };
 
   const handleOAuth = async (provider: "google" | "apple") => {
-    setLoading(true);
     // TODO: Implement OAuth flow
     console.log(`OAuth with ${provider}`);
-    setLoading(false);
   };
 
   return (
@@ -199,6 +197,37 @@ export default function SignupPage() {
           </div>
           {errors.password && <p className="text-red-500 text-sm mt-1">{errors.password}</p>}
         </div>
+
+        <div>
+          <label htmlFor="confirmPassword" className="block text-sm font-medium text-foreground mb-2">
+            Confirm Password
+          </label>
+          <div className="relative">
+            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted" />
+            <input
+              id="confirmPassword"
+              type={showConfirmPassword ? "text" : "password"}
+              value={formData.confirmPassword}
+              onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+              placeholder="••••••••"
+              className={`w-full pl-10 pr-12 py-3 bg-background border ${errors.confirmPassword ? "border-red-500" : "border-border"} rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
+            >
+              {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
+          {errors.confirmPassword && <p className="text-red-500 text-sm mt-1">{errors.confirmPassword}</p>}
+        </div>
+
+        {error && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p className="text-red-500 text-sm">{error}</p>
+          </div>
+        )}
 
         <button
           type="submit"

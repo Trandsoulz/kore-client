@@ -8,7 +8,7 @@ import { useAuthStore } from "@/app/store/auth";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, setLoading, isLoading } = useAuthStore();
+  const { login, isLoading, error, setError } = useAuthStore();
   
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -36,31 +36,21 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     
     if (!validateForm()) return;
     
-    setLoading(true);
-    
-    // Simulate API call - replace with actual API
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    
-    // Mock login
-    login({
-      id: crypto.randomUUID(),
-      name: "John Doe",
-      email: formData.email,
-      profileComplete: false,
-    });
-    
-    setLoading(false);
-    router.push("/dashboard");
+    try {
+      await login(formData.email, formData.password);
+      router.push("/dashboard");
+    } catch {
+      // Error is already set in the store
+    }
   };
 
   const handleOAuth = async (provider: "google" | "apple") => {
-    setLoading(true);
     // TODO: Implement OAuth flow
     console.log(`OAuth with ${provider}`);
-    setLoading(false);
   };
 
   return (
@@ -179,6 +169,12 @@ export default function LoginPage() {
           </div>
           {errors.password && <p className="text-red-500 text-sm mt-1">{errors.password}</p>}
         </div>
+
+        {error && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p className="text-red-500 text-sm">{error}</p>
+          </div>
+        )}
 
         <button
           type="submit"

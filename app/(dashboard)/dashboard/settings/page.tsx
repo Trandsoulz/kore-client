@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import {
   User,
@@ -20,17 +20,29 @@ import {
   Smartphone,
   Mail,
   MessageSquare,
+  Loader2,
 } from "lucide-react";
 import { useAuthStore } from "@/app/store/auth";
 import { useRulesStore } from "@/app/store/rules";
 import { usePartnersStore } from "@/app/store/partners";
 
 export default function SettingsPage() {
-  const { user, logout } = useAuthStore();
+  const { user, logout, fetchProfile } = useAuthStore();
   const { rules, resetRules } = useRulesStore();
   const { partners } = usePartnersStore();
   const [activeSection, setActiveSection] = useState("profile");
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+
+  // Fetch profile from API on mount
+  useEffect(() => {
+    const loadProfile = async () => {
+      setIsLoadingProfile(true);
+      await fetchProfile();
+      setIsLoadingProfile(false);
+    };
+    loadProfile();
+  }, [fetchProfile]);
 
   const profile = user?.profile;
   const connectedPartners = partners.filter((p) => p.connected);
@@ -109,51 +121,69 @@ export default function SettingsPage() {
                   </button>
                 </div>
 
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center text-2xl font-bold text-primary">
-                    {user?.name?.charAt(0) || "U"}
+                {isLoadingProfile ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
                   </div>
-                  <div>
-                    <h3 className="text-xl font-semibold text-foreground">
-                      {user?.name || "User"}
-                    </h3>
-                    <p className="text-muted">{user?.email || "user@example.com"}</p>
-                  </div>
-                </div>
-
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="p-4 bg-background rounded-xl">
-                    <p className="text-sm text-muted mb-1">Full Name</p>
-                    <p className="font-medium text-foreground">
-                      {user?.name || "Not set"}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-background rounded-xl">
-                    <p className="text-sm text-muted mb-1">Phone Number</p>
-                    <p className="font-medium text-foreground">
-                      {profile?.phone || "Not set"}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-background rounded-xl">
-                    <p className="text-sm text-muted mb-1">Date of Birth</p>
-                    <p className="font-medium text-foreground">
-                      {profile?.dob || "Not set"}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-background rounded-xl">
-                    <p className="text-sm text-muted mb-1">BVN Status</p>
-                    <div className="flex items-center gap-2">
-                      {profile?.bvn ? (
-                        <>
-                          <Check className="w-4 h-4 text-secondary" />
-                          <span className="font-medium text-secondary">Verified</span>
-                        </>
-                      ) : (
-                        <span className="font-medium text-muted">Not verified</span>
-                      )}
+                ) : (
+                  <>
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center text-2xl font-bold text-primary">
+                        {user?.name?.charAt(0) || profile?.firstName?.charAt(0) || "U"}
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-semibold text-foreground">
+                          {profile?.firstName && profile?.surname 
+                            ? `${profile.firstName} ${profile.surname}` 
+                            : user?.name || "User"}
+                        </h3>
+                        <p className="text-muted">{user?.email || "user@example.com"}</p>
+                        {user?.profileComplete && (
+                          <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 bg-secondary/10 text-secondary text-xs font-medium rounded-full">
+                            <Check className="w-3 h-3" />
+                            Verified
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div className="p-4 bg-background rounded-xl">
+                        <p className="text-sm text-muted mb-1">Full Name</p>
+                        <p className="font-medium text-foreground">
+                          {profile?.firstName && profile?.surname 
+                            ? `${profile.firstName} ${profile.surname}` 
+                            : user?.name || "Not set"}
+                        </p>
+                      </div>
+                      <div className="p-4 bg-background rounded-xl">
+                        <p className="text-sm text-muted mb-1">Phone Number</p>
+                        <p className="font-medium text-foreground">
+                          {profile?.phone || "Not set"}
+                        </p>
+                      </div>
+                      <div className="p-4 bg-background rounded-xl">
+                        <p className="text-sm text-muted mb-1">Date of Birth</p>
+                        <p className="font-medium text-foreground">
+                          {profile?.dob || "Not set"}
+                        </p>
+                      </div>
+                      <div className="p-4 bg-background rounded-xl">
+                        <p className="text-sm text-muted mb-1">Profile Status</p>
+                        <div className="flex items-center gap-2">
+                          {user?.profileComplete ? (
+                            <>
+                              <Check className="w-4 h-4 text-secondary" />
+                              <span className="font-medium text-secondary">Verified</span>
+                            </>
+                          ) : (
+                            <span className="font-medium text-muted">Not verified</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
