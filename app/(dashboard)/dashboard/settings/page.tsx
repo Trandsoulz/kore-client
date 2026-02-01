@@ -21,28 +21,47 @@ import {
   Mail,
   MessageSquare,
   Loader2,
+  FileCheck,
+  ExternalLink,
+  XCircle,
+  Clock,
+  CheckCircle2,
 } from "lucide-react";
 import { useAuthStore } from "@/app/store/auth";
 import { useRulesStore } from "@/app/store/rules";
 import { usePartnersStore } from "@/app/store/partners";
+import { useMandateStore } from "@/app/store/mandate";
 
 export default function SettingsPage() {
   const { user, logout, fetchProfile } = useAuthStore();
-  const { rules, resetRules } = useRulesStore();
+  const { rules, resetRules, fetchActiveRule } = useRulesStore();
   const { partners } = usePartnersStore();
+  const { 
+    mandate, 
+    isLoading: isMandateLoading, 
+    isPolling,
+    fetchMandate, 
+    cancelMandate,
+    startPolling,
+    hasActiveMandate,
+    isPending,
+    needsActivation,
+  } = useMandateStore();
   const [activeSection, setActiveSection] = useState("profile");
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showCancelMandateModal, setShowCancelMandateModal] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
 
-  // Fetch profile from API on mount
+  // Fetch profile, rules, and mandate from API on mount
   useEffect(() => {
-    const loadProfile = async () => {
+    const loadData = async () => {
       setIsLoadingProfile(true);
-      await fetchProfile();
+      await Promise.all([fetchProfile(), fetchActiveRule(), fetchMandate()]);
       setIsLoadingProfile(false);
     };
-    loadProfile();
-  }, [fetchProfile]);
+    loadData();
+  }, [fetchProfile, fetchActiveRule, fetchMandate]);
 
   const profile = user?.profile;
   const connectedPartners = partners.filter((p) => p.connected);
@@ -58,6 +77,7 @@ export default function SettingsPage() {
   const sections = [
     { id: "profile", label: "Profile", icon: User },
     { id: "bank", label: "Bank Accounts", icon: CreditCard },
+    { id: "mandate", label: "Direct Debit", icon: FileCheck },
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "rules", label: "Rules & Allocation", icon: Sliders },
     { id: "partners", label: "Connected Partners", icon: LinkIcon },
@@ -243,6 +263,177 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {/* Mandate / Direct Debit Section */}
+          {activeSection === "mandate" && (
+            <div className="space-y-6">
+              <div className="bg-card border border-border rounded-2xl p-6">
+                <div className="flex items-start justify-between mb-6">
+                  <div>
+                    <h2 className="text-lg font-semibold text-foreground">
+                      Direct Debit Authorization
+                    </h2>
+                    <p className="text-sm text-muted mt-1">
+                      Manage your automated debit mandate
+                    </p>
+                  </div>
+                </div>
+
+                {isMandateLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                  </div>
+                ) : mandate ? (
+                  <div className="space-y-4">
+                    {/* Mandate Status Card */}
+                    <div className="p-4 bg-background rounded-xl border border-border">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                            mandate.status === "ACTIVE" ? "bg-secondary/10" :
+                            mandate.status === "PENDING" ? "bg-accent/10" :
+                            mandate.status === "CANCELLED" ? "bg-muted/10" :
+                            "bg-red-500/10"
+                          }`}>
+                            {mandate.status === "ACTIVE" && <CheckCircle2 className="w-6 h-6 text-secondary" />}
+                            {mandate.status === "PENDING" && <Clock className="w-6 h-6 text-accent" />}
+                            {mandate.status === "CANCELLED" && <XCircle className="w-6 h-6 text-muted" />}
+                            {mandate.status === "FAILED" && <AlertTriangle className="w-6 h-6 text-red-500" />}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-foreground">
+                              {mandate.status === "ACTIVE" && "Mandate Active"}
+                              {mandate.status === "PENDING" && "Activation Pending"}
+                              {mandate.status === "CANCELLED" && "Mandate Cancelled"}
+                              {mandate.status === "FAILED" && "Mandate Failed"}
+                            </p>
+                            <p className="text-sm text-muted">
+                              Created {new Date(mandate.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          mandate.status === "ACTIVE" ? "bg-secondary/10 text-secondary" :
+                          mandate.status === "PENDING" ? "bg-accent/10 text-accent" :
+                          mandate.status === "CANCELLED" ? "bg-muted/10 text-muted" :
+                          "bg-red-500/10 text-red-500"
+                        }`}>
+                          {mandate.status}
+                        </span>
+                      </div>
+
+                      {/* Mandate Details */}
+                      <div className="grid sm:grid-cols-2 gap-4 pt-4 border-t border-border">
+                        {mandate.mandate_reference && (
+                          <div>
+                            <p className="text-xs text-muted mb-1">Mandate Reference</p>
+                            <p className="text-sm font-mono text-foreground">{mandate.mandate_reference}</p>
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-xs text-muted mb-1">Request Reference</p>
+                          <p className="text-sm font-mono text-foreground">{mandate.request_ref}</p>
+                        </div>
+                        {mandate.cancelled_at && (
+                          <div>
+                            <p className="text-xs text-muted mb-1">Cancelled On</p>
+                            <p className="text-sm text-foreground">
+                              {new Date(mandate.cancelled_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pending Activation Action */}
+                      {mandate.status === "PENDING" && mandate.activation_url && (
+                        <div className="mt-4 pt-4 border-t border-border">
+                          <div className="bg-accent/5 border border-accent/20 rounded-xl p-4 mb-4">
+                            <div className="flex items-start gap-3">
+                              <AlertTriangle className="w-5 h-5 text-accent shrink-0 mt-0.5" />
+                              <div>
+                                <p className="font-medium text-foreground">Action Required</p>
+                                <p className="text-sm text-muted mt-1">
+                                  Complete your mandate activation by authorizing the direct debit on your bank&apos;s platform.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex gap-3">
+                            <a
+                              href={mandate.activation_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl font-medium hover:bg-primary-dark transition-colors"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                              Complete Activation
+                            </a>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await startPolling();
+                                } catch {
+                                  // Error handled in store
+                                }
+                              }}
+                              disabled={isPolling}
+                              className="px-4 py-3 border border-border rounded-xl font-medium text-foreground hover:bg-muted/10 transition-colors disabled:opacity-50"
+                            >
+                              {isPolling ? (
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                              ) : (
+                                "Refresh Status"
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Active Mandate Actions */}
+                      {mandate.status === "ACTIVE" && (
+                        <div className="mt-4 pt-4 border-t border-border">
+                          <button
+                            onClick={() => setShowCancelMandateModal(true)}
+                            className="flex items-center gap-2 px-4 py-2 text-red-500 border border-red-500/30 rounded-xl text-sm font-medium hover:bg-red-500/10 transition-colors"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            Cancel Mandate
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Info about mandate */}
+                    <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
+                      <h4 className="font-medium text-foreground mb-2">What is a Direct Debit Mandate?</h4>
+                      <p className="text-sm text-muted">
+                        A direct debit mandate authorizes Kore to automatically debit your bank account 
+                        according to your savings rules. You can cancel this authorization at any time.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <div className="w-16 h-16 bg-muted/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <FileCheck className="w-8 h-8 text-muted" />
+                    </div>
+                    <h3 className="font-semibold text-foreground mb-2">No Mandate Set Up</h3>
+                    <p className="text-muted text-sm max-w-md mx-auto mb-6">
+                      You haven&apos;t set up a direct debit mandate yet. Complete the onboarding process 
+                      to authorize automated debits from your account.
+                    </p>
+                    <a
+                      href="/dashboard/onboarding"
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-medium hover:bg-primary-dark transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Set Up Mandate
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Notifications Section */}
           {activeSection === "notifications" && (
             <div className="space-y-6">
@@ -370,23 +561,23 @@ export default function SettingsPage() {
                     </p>
                   </div>
                   <div className="p-4 bg-background rounded-xl">
-                    <p className="text-sm text-muted mb-1">Monthly Amount</p>
+                    <p className="text-sm text-muted mb-1">Monthly Limit</p>
                     <p className="font-medium text-foreground">
-                      {rules?.monthlyAmount
-                        ? formatCurrency(rules.monthlyAmount)
+                      {rules?.monthlyMaxDebit
+                        ? formatCurrency(rules.monthlyMaxDebit)
                         : "Not set"}
                     </p>
                   </div>
                   <div className="p-4 bg-background rounded-xl">
                     <p className="text-sm text-muted mb-1">Debit Frequency</p>
                     <p className="font-medium text-foreground capitalize">
-                      {rules?.debitFrequency?.replace(/_/g, " ") || "Not set"}
+                      {rules?.frequency?.toLowerCase() || "Not set"}
                     </p>
                   </div>
                   <div className="p-4 bg-background rounded-xl">
-                    <p className="text-sm text-muted mb-1">Preferred Debit Day</p>
+                    <p className="text-sm text-muted mb-1">Amount Per Cycle</p>
                     <p className="font-medium text-foreground">
-                      {rules?.preferredDebitDay || "Auto"}
+                      {rules?.amountPerFrequency ? formatCurrency(rules.amountPerFrequency) : "Not set"}
                     </p>
                   </div>
                 </div>
@@ -666,6 +857,62 @@ export default function SettingsPage() {
                 className="flex-1 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors"
               >
                 Log Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Mandate Modal */}
+      {showCancelMandateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => !isCancelling && setShowCancelMandateModal(false)}
+          />
+          <div className="relative w-full max-w-sm bg-background border border-border rounded-2xl shadow-2xl p-6">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                <XCircle className="w-8 h-8 text-red-500" />
+              </div>
+              <h3 className="text-xl font-bold text-foreground mb-2">
+                Cancel Mandate?
+              </h3>
+              <p className="text-muted">
+                This will stop all automated debits from your account. You can set up a new mandate later.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowCancelMandateModal(false)}
+                disabled={isCancelling}
+                className="flex-1 py-3 border border-border rounded-xl font-medium text-foreground hover:bg-card transition-colors disabled:opacity-50"
+              >
+                Keep Mandate
+              </button>
+              <button
+                onClick={async () => {
+                  setIsCancelling(true);
+                  try {
+                    await cancelMandate();
+                    setShowCancelMandateModal(false);
+                  } catch {
+                    // Error handled in store
+                  } finally {
+                    setIsCancelling(false);
+                  }
+                }}
+                disabled={isCancelling}
+                className="flex-1 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isCancelling ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Cancelling...
+                  </>
+                ) : (
+                  "Cancel Mandate"
+                )}
               </button>
             </div>
           </div>

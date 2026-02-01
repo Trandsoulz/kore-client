@@ -17,7 +17,7 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const { user, isAuthenticated, fetchCurrentUser, logout } = useAuthStore();
-  const { onboardingComplete } = useRulesStore();
+  const { onboardingComplete, fetchActiveRule } = useRulesStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -41,9 +41,9 @@ export default function DashboardLayout({
       }
 
       if (isAuthenticated && user) {
-        // Refresh user data from API
+        // Refresh user data and rules from API
         try {
-          await fetchCurrentUser();
+          await Promise.all([fetchCurrentUser(), fetchActiveRule()]);
         } catch {
           // Token invalid, redirect to login
           logout();
@@ -58,7 +58,7 @@ export default function DashboardLayout({
     if (mounted) {
       validateAuth();
     }
-  }, [mounted, isAuthenticated, user, fetchCurrentUser, logout, router]);
+  }, [mounted, isAuthenticated, user, fetchCurrentUser, fetchActiveRule, logout, router]);
 
   useEffect(() => {
     if (mounted && !isValidating && !isAuthenticated) {

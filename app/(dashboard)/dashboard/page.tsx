@@ -1,52 +1,95 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   PiggyBank,
   TrendingUp,
   Wallet,
   ArrowUpRight,
   ArrowDownLeft,
+  Loader2,
 } from "lucide-react";
 import { useAuthStore } from "@/app/store/auth";
+import { useTransactionsStore, Transaction } from "@/app/store/transactions";
 
-const stats = [
-  {
-    label: "Total Savings",
-    value: "₦0.00",
-    change: "+0%",
-    icon: PiggyBank,
-    color: "text-primary",
-    bgColor: "bg-primary/10",
-  },
-  {
-    label: "Investments",
-    value: "₦0.00",
-    change: "+0%",
-    icon: TrendingUp,
-    color: "text-secondary",
-    bgColor: "bg-secondary/10",
-  },
-  {
-    label: "Total Automated",
-    value: "₦0.00",
-    change: "This month",
-    icon: Wallet,
-    color: "text-accent",
-    bgColor: "bg-accent/10",
-  },
-];
-
-const recentTransactions: {
-  id: string;
-  type: "credit" | "debit";
-  description: string;
-  amount: string;
-  date: string;
-  bucket: string;
-}[] = [];
+// Format currency
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    minimumFractionDigits: 2,
+  }).format(amount);
+};
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
+  const { 
+    transactions, 
+    summary,
+    isLoading, 
+    fetchTransactions, 
+    fetchSummary,
+    getTotalDebited,
+    getMonthlyTotal,
+  } = useTransactionsStore();
+  
+  const [mounted, setMounted] = useState(false);
+
+  // Fetch transactions and summary on mount
+  useEffect(() => {
+    setMounted(true);
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          fetchTransactions({ limit: 5 }),
+          fetchSummary('month'),
+        ]);
+      } catch {
+        // Error handling is done in the store
+      }
+    };
+    loadData();
+  }, [fetchTransactions, fetchSummary]);
+
+  // Calculate stats from summary
+  const totalSavings = summary?.by_bucket?.SAVINGS?.total || 0;
+  const totalInvestments = summary?.by_bucket?.INVESTMENTS?.total || 0;
+  const monthlyTotal = getMonthlyTotal();
+
+  const stats = [
+    {
+      label: "Total Savings",
+      value: formatCurrency(totalSavings),
+      change: `${summary?.by_bucket?.SAVINGS?.count || 0} transactions`,
+      icon: PiggyBank,
+      color: "text-primary",
+      bgColor: "bg-primary/10",
+    },
+    {
+      label: "Investments",
+      value: formatCurrency(totalInvestments),
+      change: `${summary?.by_bucket?.INVESTMENTS?.count || 0} transactions`,
+      icon: TrendingUp,
+      color: "text-secondary",
+      bgColor: "bg-secondary/10",
+    },
+    {
+      label: "Total Automated",
+      value: formatCurrency(monthlyTotal),
+      change: "This month",
+      icon: Wallet,
+      color: "text-accent",
+      bgColor: "bg-accent/10",
+    },
+  ];
+
+  // Get recent transactions (first 5)
+  const recentTransactions = transactions.slice(0, 5);
+
+  // Don't render until mounted to avoid hydration mismatch
+  if (!mounted) {
+    return null;
+  }
 
   return (
     <div className="space-y-8">
@@ -123,7 +166,12 @@ export default function DashboardPage() {
         </div>
 
         <div className="bg-card border border-border rounded-2xl overflow-hidden">
-          {recentTransactions.length === 0 ? (
+          {isLoading ? (
+            <div className="p-12 text-center">
+              <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto mb-4" />
+              <p className="text-sm text-muted">Loading transactions...</p>
+            </div>
+          ) : recentTransactions.length === 0 ? (
             <div className="p-12 text-center">
               <div className="w-16 h-16 bg-muted/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <Wallet className="w-8 h-8 text-muted" />
@@ -136,7 +184,11 @@ export default function DashboardPage() {
           ) : (
             <div className="divide-y divide-border">
               {recentTransactions.map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between p-4 hover:bg-background transition-colors">
+                <a 
+                  key={tx.id} 
+                  href={`/dashboard/transactions/${tx.reference}`}
+                  className="flex items-center justify-between p-4 hover:bg-background transition-colors"
+                >
                   <div className="flex items-center gap-3">
                     <div
                       className={`w-10 h-10 rounded-lg flex items-center justify-center ${
@@ -151,7 +203,7 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <p className="font-medium text-foreground">{tx.description}</p>
-                      <p className="text-sm text-muted">{tx.bucket}</p>
+                      <p className="text-sm text-muted capitalize">{tx.bucket}</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -160,11 +212,11 @@ export default function DashboardPage() {
                         tx.type === "credit" ? "text-secondary" : "text-foreground"
                       }`}
                     >
-                      {tx.type === "credit" ? "+" : "-"}{tx.amount}
+                      {tx.type === "credit" ? "+" : "-"}{formatCurrency(tx.amount)}
                     </p>
                     <p className="text-sm text-muted">{tx.date}</p>
                   </div>
-                </div>
+                </a>
               ))}
             </div>
           )}

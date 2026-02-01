@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -13,6 +14,7 @@ import {
   CheckCircle2,
   Clock,
   XCircle,
+  Loader2,
 } from "lucide-react";
 import { useTransactionsStore } from "@/app/store/transactions";
 
@@ -24,7 +26,7 @@ const formatCurrency = (value: number) => {
   }).format(value);
 };
 
-const statusConfig = {
+const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   completed: {
     icon: CheckCircle2,
     color: "text-secondary",
@@ -33,6 +35,10 @@ const statusConfig = {
     icon: Clock,
     color: "text-accent",
   },
+  processing: {
+    icon: Clock,
+    color: "text-blue-500",
+  },
   failed: {
     icon: XCircle,
     color: "text-red-500",
@@ -40,12 +46,42 @@ const statusConfig = {
 };
 
 export default function TransactionsPage() {
-  const { transactions, getTotalDebited, getTotalAllocated, getMonthlyTotal } =
-    useTransactionsStore();
+  const { 
+    transactions, 
+    isLoading,
+    fetchTransactions,
+    fetchSummary,
+    getTotalDebited, 
+    getTotalAllocated, 
+    getMonthlyTotal 
+  } = useTransactionsStore();
+  
+  const [mounted, setMounted] = useState(false);
+
+  // Fetch transactions on mount
+  useEffect(() => {
+    setMounted(true);
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          fetchTransactions(),
+          fetchSummary('month'),
+        ]);
+      } catch {
+        // Error handling is done in the store
+      }
+    };
+    loadData();
+  }, [fetchTransactions, fetchSummary]);
 
   const totalDebited = getTotalDebited();
   const totalAllocated = getTotalAllocated();
   const monthlyTotal = getMonthlyTotal();
+
+  // Don't render until mounted to avoid hydration mismatch
+  if (!mounted) {
+    return null;
+  }
 
   return (
     <div className="space-y-8">
@@ -101,7 +137,12 @@ export default function TransactionsPage() {
 
       {/* Transactions List */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
-        {transactions.length === 0 ? (
+        {isLoading ? (
+          <div className="p-16 text-center">
+            <Loader2 className="w-10 h-10 text-primary animate-spin mx-auto mb-6" />
+            <p className="text-muted">Loading transactions...</p>
+          </div>
+        ) : transactions.length === 0 ? (
           <div className="p-16 text-center">
             <div className="w-20 h-20 bg-muted/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
               <Receipt className="w-10 h-10 text-muted" />

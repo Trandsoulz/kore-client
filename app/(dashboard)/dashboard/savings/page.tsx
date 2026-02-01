@@ -53,8 +53,8 @@ export default function SavingsPage() {
   const savingsPartners = partners.filter((p) => p.type === "savings");
   const connectedPartners = savingsPartners.filter((p) => p.connected);
   
-  const monthlyAllocation = rules
-    ? (rules.monthlyAmount * rules.bucketAllocation.savings) / 100
+  const monthlyAllocation = rules?.amountPerFrequency && rules?.bucketAllocation?.savings
+    ? (rules.amountPerFrequency * rules.bucketAllocation.savings) / 100
     : 0;
 
   const handleConnect = async (partner: Partner) => {

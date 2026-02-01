@@ -11,28 +11,25 @@ import {
   TrendingUp,
   PieChart,
   Bell,
-  Target,
-  Briefcase,
-  Coins,
-  ShieldCheck,
+  AlertCircle,
   PiggyBank,
-  Building,
+  ShoppingBag,
   Shield,
-  CreditCard,
-  Landmark,
+  Receipt,
+  Loader2,
   ExternalLink,
-  Smartphone,
+  FileCheck,
+  CheckCircle2,
 } from "lucide-react";
 import { useAuthStore } from "@/app/store/auth";
 import {
   useRulesStore,
-  IncomeType,
   DebitFrequency,
-  RiskTolerance,
   BucketAllocation,
 } from "@/app/store/rules";
+import { useMandateStore } from "@/app/store/mandate";
 
-const TOTAL_STEPS = 7;
+const TOTAL_STEPS = 6;
 
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat("en-NG", {
@@ -44,38 +41,40 @@ const formatCurrency = (value: number) => {
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user, isAuthenticated } = useAuthStore();
-  const { setRules, completeOnboarding, onboardingComplete } = useRulesStore();
+  const { isAuthenticated } = useAuthStore();
+  const { createRule, onboardingComplete, isLoading, error } = useRulesStore();
+  const { 
+    mandate, 
+    createMandate, 
+    startPolling, 
+    isPolling,
+    hasActiveMandate,
+    needsActivation,
+  } = useMandateStore();
 
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [mandateCreated, setMandateCreated] = useState(false);
 
-  // Form state
-  const [incomeType, setIncomeType] = useState<IncomeType>("salary");
-  const [monthlyAmount, setMonthlyAmount] = useState<string>("");
-  const [badMonthIncome, setBadMonthIncome] = useState<string>("");
-  const [goodMonthIncome, setGoodMonthIncome] = useState<string>("");
-  const [debitFrequency, setDebitFrequency] = useState<DebitFrequency>("month_end");
-  const [hasEmergencyFund, setHasEmergencyFund] = useState<boolean | null>(null);
-  const [emergencyFundTarget, setEmergencyFundTarget] = useState<string>("");
-  const [primaryGoal, setPrimaryGoal] = useState<string>("");
-  const [riskTolerance, setRiskTolerance] = useState<RiskTolerance>("moderate");
+  // Form state - aligned with backend API
+  const [monthlyMaxDebit, setMonthlyMaxDebit] = useState<string>("");
+  const [singleMaxDebit, setSingleMaxDebit] = useState<string>("");
+  const [frequency, setFrequency] = useState<DebitFrequency>("MONTHLY");
+  const [amountPerFrequency, setAmountPerFrequency] = useState<string>("");
+  const [failureAction, setFailureAction] = useState<"RETRY" | "SKIP" | "NOTIFY">("NOTIFY");
+  const [startDate, setStartDate] = useState<string>(
+    new Date().toISOString().split("T")[0]
+  );
+  const [endDate, setEndDate] = useState<string>("");
   const [bucketAllocation, setBucketAllocation] = useState<BucketAllocation>({
-    savings: 40,
+    savings: 50,
     investments: 30,
-    pensions: 20,
-    insurance: 10,
+    spending: 10,
+    emergency: 10,
+    bills: 0,
   });
-  const [notifyOnDebit, setNotifyOnDebit] = useState(true);
-  const [notifyOnAllocation, setNotifyOnAllocation] = useState(true);
-  const [weeklyReport, setWeeklyReport] = useState(true);
-  
-  // Mandate setup state
-  const [mandateType, setMandateType] = useState<"direct_debit" | "card" | "skip" | null>(null);
-  const [selectedBank, setSelectedBank] = useState<string>("");
-  const [accountNumber, setAccountNumber] = useState<string>("");
-  const [isSettingUpMandate, setIsSettingUpMandate] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -101,47 +100,48 @@ export default function OnboardingPage() {
     const newErrors: Record<string, string> = {};
 
     switch (step) {
-      case 1: // Income Type & Amount
-        if (!monthlyAmount || parseFloat(monthlyAmount) <= 0) {
-          newErrors.monthlyAmount = "Enter a valid amount";
+      case 1: // Debit Limits
+        if (!monthlyMaxDebit || parseFloat(monthlyMaxDebit) <= 0) {
+          newErrors.monthlyMaxDebit = "Enter a valid monthly limit";
         }
-        if (incomeType === "variable") {
-          if (!badMonthIncome || parseFloat(badMonthIncome) <= 0) {
-            newErrors.badMonthIncome = "Enter your minimum monthly income";
-          }
-          if (!goodMonthIncome || parseFloat(goodMonthIncome) <= 0) {
-            newErrors.goodMonthIncome = "Enter your maximum monthly income";
-          }
-          if (parseFloat(goodMonthIncome) < parseFloat(badMonthIncome)) {
-            newErrors.goodMonthIncome = "Good month should be higher than bad month";
-          }
+        if (!singleMaxDebit || parseFloat(singleMaxDebit) <= 0) {
+          newErrors.singleMaxDebit = "Enter a valid single transaction limit";
+        }
+        if (parseFloat(singleMaxDebit) > parseFloat(monthlyMaxDebit)) {
+          newErrors.singleMaxDebit = "Single limit cannot exceed monthly limit";
         }
         break;
 
-      case 2: // Debit Frequency
-        if (!debitFrequency) {
-          newErrors.debitFrequency = "Select when to debit";
+      case 2: // Frequency & Amount
+        if (!frequency) {
+          newErrors.frequency = "Select a debit frequency";
+        }
+        if (!amountPerFrequency || parseFloat(amountPerFrequency) <= 0) {
+          newErrors.amountPerFrequency = "Enter a valid amount";
+        }
+        if (parseFloat(amountPerFrequency) > parseFloat(singleMaxDebit)) {
+          newErrors.amountPerFrequency = "Amount cannot exceed single transaction limit";
         }
         break;
 
-      case 3: // Emergency Fund & Goals
-        if (hasEmergencyFund === null) {
-          newErrors.hasEmergencyFund = "Select an option";
-        }
-        if (!primaryGoal) {
-          newErrors.primaryGoal = "Select your primary goal";
-        }
-        break;
-
-      case 4: // Risk Tolerance
-        if (!riskTolerance) {
-          newErrors.riskTolerance = "Select your risk tolerance";
-        }
-        break;
-
-      case 5: // Bucket Allocation
+      case 3: // Bucket Allocation
         if (totalAllocation !== 100) {
           newErrors.bucketAllocation = `Allocation must equal 100% (currently ${totalAllocation}%)`;
+        }
+        break;
+
+      case 4: // Failure Handling
+        if (!failureAction) {
+          newErrors.failureAction = "Select what happens if a debit fails";
+        }
+        break;
+
+      case 5: // Date Range
+        if (!startDate) {
+          newErrors.startDate = "Select a start date";
+        }
+        if (endDate && new Date(endDate) <= new Date(startDate)) {
+          newErrors.endDate = "End date must be after start date";
         }
         break;
     }
@@ -164,51 +164,62 @@ export default function OnboardingPage() {
     if (!validateStep(currentStep)) return;
 
     setIsSubmitting(true);
+    setApiError(null);
 
-    const rules = {
-      incomeType,
-      monthlyAmount: parseFloat(monthlyAmount) || 0,
-      badMonthIncome: parseFloat(badMonthIncome) || 0,
-      goodMonthIncome: parseFloat(goodMonthIncome) || 0,
-      debitFrequency,
-      hasEmergencyFund: hasEmergencyFund || false,
-      emergencyFundTarget: parseFloat(emergencyFundTarget) || undefined,
-      primaryGoal: primaryGoal as "build_savings" | "grow_wealth" | "debt_free" | "retirement",
-      riskTolerance,
-      bucketAllocation,
-      notifyOnDebit,
-      notifyOnAllocation,
-      weeklyReport,
-    };
-
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    setRules(rules);
-    completeOnboarding();
-    setIsSubmitting(false);
-    
-    // Move to mandate setup step
-    setCurrentStep(7);
+    try {
+      await createRule({
+        monthlyMaxDebit: parseFloat(monthlyMaxDebit),
+        singleMaxDebit: parseFloat(singleMaxDebit),
+        frequency,
+        amountPerFrequency: parseFloat(amountPerFrequency),
+        bucketAllocation,
+        failureAction,
+        startDate,
+        endDate: endDate || null,
+      });
+      
+      // Move to mandate creation step
+      setCurrentStep(6);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save rules";
+      setApiError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleMandateSetup = async () => {
-    if (mandateType === "skip") {
-      router.push("/dashboard");
-      return;
+  const handleCreateMandate = async () => {
+    setIsSubmitting(true);
+    setApiError(null);
+
+    try {
+      await createMandate();
+      setMandateCreated(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create mandate";
+      setApiError(message);
+    } finally {
+      setIsSubmitting(false);
     }
+  };
 
-    if (mandateType === "direct_debit" && (!selectedBank || !accountNumber)) {
-      setErrors({ mandate: "Please enter your bank details" });
-      return;
+  const handleRefreshMandateStatus = async () => {
+    try {
+      await startPolling(3000, 20);
+      // If mandate is now active, redirect to dashboard
+      if (hasActiveMandate()) {
+        router.push("/dashboard");
+      }
+    } catch {
+      // Error handled in store
     }
+  };
 
-    setIsSettingUpMandate(true);
+  const handleSkipMandate = () => {
+    router.push("/dashboard");
+  };
 
-    // Simulate mandate setup API call
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    setIsSettingUpMandate(false);
+  const handleFinish = () => {
     router.push("/dashboard");
   };
 
@@ -234,20 +245,15 @@ export default function OnboardingPage() {
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
           <span className="text-2xl font-bold text-primary">Kore</span>
           <div className="flex items-center gap-2 text-sm text-muted">
-            {currentStep < 7 ? (
-              <span>Step {currentStep} of 6</span>
-            ) : (
-              <span>Almost done!</span>
-            )}
+            <span>Step {currentStep} of {TOTAL_STEPS}</span>
           </div>
         </div>
       </header>
 
       {/* Progress Bar */}
-      {currentStep < 7 && (
       <div className="max-w-3xl mx-auto px-4 pt-6">
         <div className="flex gap-1.5">
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
             <div
               key={i}
               className={`flex-1 h-1.5 rounded-full transition-colors ${
@@ -257,12 +263,20 @@ export default function OnboardingPage() {
           ))}
         </div>
       </div>
-      )}
 
       {/* Content */}
       <main className="max-w-3xl mx-auto px-4 py-8">
         <div className="bg-card border border-border rounded-2xl p-6 sm:p-8">
-          {/* Step 1: Income Information */}
+          
+          {/* API Error */}
+          {apiError && (
+            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+              <p className="text-red-500 text-sm">{apiError}</p>
+            </div>
+          )}
+
+          {/* Step 1: Debit Limits */}
           {currentStep === 1 && (
             <div className="space-y-6">
               <div className="flex items-center gap-3 mb-8">
@@ -270,125 +284,60 @@ export default function OnboardingPage() {
                   <Wallet className="w-6 h-6 text-primary" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-foreground">Tell us about your income</h2>
-                  <p className="text-muted">This helps us customize your automation rules</p>
+                  <h2 className="text-xl font-bold text-foreground">Set your debit limits</h2>
+                  <p className="text-muted">Control how much we can debit from your account</p>
                 </div>
               </div>
 
-              {/* Income Type */}
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-3">
-                  What type of income do you earn?
-                </label>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {[
-                    {
-                      value: "salary",
-                      label: "Fixed Salary",
-                      desc: "I earn the same amount monthly",
-                      icon: Briefcase,
-                    },
-                    {
-                      value: "variable",
-                      label: "Variable Income",
-                      desc: "Freelancer, gig worker, business owner",
-                      icon: Coins,
-                    },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => setIncomeType(option.value as IncomeType)}
-                      className={`p-4 border rounded-xl text-left transition-all ${
-                        incomeType === option.value
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary/30"
-                      }`}
-                    >
-                      <option.icon
-                        className={`w-6 h-6 mb-2 ${
-                          incomeType === option.value ? "text-primary" : "text-muted"
-                        }`}
-                      />
-                      <p className="font-medium text-foreground">{option.label}</p>
-                      <p className="text-sm text-muted">{option.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Monthly Amount */}
+              {/* Monthly Max Debit */}
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">
-                  {incomeType === "salary"
-                    ? "How much do you earn monthly?"
-                    : "How much should we collect monthly on average?"}
+                  Maximum total amount per month
                 </label>
+                <p className="text-sm text-muted mb-3">
+                  What is the maximum total amount we are allowed to debit from your account per month?
+                </p>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted">₦</span>
                   <input
-                    type="text"
-                    value={monthlyAmount}
-                    onChange={(e) => setMonthlyAmount(e.target.value.replace(/[^0-9]/g, ""))}
-                    placeholder="150,000"
-                    className={`w-full pl-8 pr-4 py-3 bg-background border ${
-                      errors.monthlyAmount ? "border-red-500" : "border-border"
-                    } rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
+                    type="number"
+                    value={monthlyMaxDebit}
+                    onChange={(e) => setMonthlyMaxDebit(e.target.value)}
+                    placeholder="e.g. 100,000"
+                    className="w-full pl-8 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
                   />
                 </div>
-                {errors.monthlyAmount && (
-                  <p className="text-red-500 text-sm mt-1">{errors.monthlyAmount}</p>
+                {errors.monthlyMaxDebit && (
+                  <p className="text-red-500 text-sm mt-1">{errors.monthlyMaxDebit}</p>
                 )}
               </div>
 
-              {/* Variable Income Range */}
-              {incomeType === "variable" && (
-                <div className="grid sm:grid-cols-2 gap-4 p-4 bg-accent/5 rounded-xl border border-accent/20">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      On a bad month, I earn at least
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted">₦</span>
-                      <input
-                        type="text"
-                        value={badMonthIncome}
-                        onChange={(e) => setBadMonthIncome(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="80,000"
-                        className={`w-full pl-8 pr-4 py-3 bg-background border ${
-                          errors.badMonthIncome ? "border-red-500" : "border-border"
-                        } rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
-                      />
-                    </div>
-                    {errors.badMonthIncome && (
-                      <p className="text-red-500 text-sm mt-1">{errors.badMonthIncome}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      On a good month, I earn up to
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted">₦</span>
-                      <input
-                        type="text"
-                        value={goodMonthIncome}
-                        onChange={(e) => setGoodMonthIncome(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="300,000"
-                        className={`w-full pl-8 pr-4 py-3 bg-background border ${
-                          errors.goodMonthIncome ? "border-red-500" : "border-border"
-                        } rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50`}
-                      />
-                    </div>
-                    {errors.goodMonthIncome && (
-                      <p className="text-red-500 text-sm mt-1">{errors.goodMonthIncome}</p>
-                    )}
-                  </div>
+              {/* Single Max Debit */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Maximum per transaction
+                </label>
+                <p className="text-sm text-muted mb-3">
+                  What is the maximum amount we can debit in a single transaction?
+                </p>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted">₦</span>
+                  <input
+                    type="number"
+                    value={singleMaxDebit}
+                    onChange={(e) => setSingleMaxDebit(e.target.value)}
+                    placeholder="e.g. 50,000"
+                    className="w-full pl-8 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  />
                 </div>
-              )}
+                {errors.singleMaxDebit && (
+                  <p className="text-red-500 text-sm mt-1">{errors.singleMaxDebit}</p>
+                )}
+              </div>
             </div>
           )}
 
-          {/* Step 2: Debit Timing */}
+          {/* Step 2: Frequency & Amount */}
           {currentStep === 2 && (
             <div className="space-y-6">
               <div className="flex items-center gap-3 mb-8">
@@ -396,249 +345,74 @@ export default function OnboardingPage() {
                   <Calendar className="w-6 h-6 text-secondary" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-foreground">When should we debit?</h2>
-                  <p className="text-muted">Choose when Kore collects from your account</p>
+                  <h2 className="text-xl font-bold text-foreground">Debit frequency</h2>
+                  <p className="text-muted">How often should we debit your account?</p>
                 </div>
               </div>
 
-              <div className="space-y-3">
-                {[
-                  {
-                    value: "month_start",
-                    label: "Beginning of the month",
-                    desc: "1st - 3rd of every month",
-                  },
-                  {
-                    value: "month_end",
-                    label: "End of the month",
-                    desc: "25th - 28th of every month",
-                  },
-                  {
-                    value: "weekly_friday",
-                    label: "Every Friday",
-                    desc: "Weekly debits for gradual savings",
-                  },
-                  {
-                    value: "bi_weekly",
-                    label: "Bi-weekly",
-                    desc: "Every two weeks",
-                  },
-                  {
-                    value: "weekends",
-                    label: "Weekends only",
-                    desc: "Saturday or Sunday each week",
-                  },
-                  {
-                    value: "anytime",
-                    label: "Anytime (Smart debit)",
-                    desc: "Kore chooses the best time based on your balance",
-                  },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => setDebitFrequency(option.value as DebitFrequency)}
-                    className={`w-full p-4 border rounded-xl text-left transition-all flex items-center justify-between ${
-                      debitFrequency === option.value
-                        ? "border-primary bg-primary/5"
-                        : "border-border hover:border-primary/30"
-                    }`}
-                  >
-                    <div>
-                      <p className="font-medium text-foreground">{option.label}</p>
-                      <p className="text-sm text-muted">{option.desc}</p>
-                    </div>
-                    {debitFrequency === option.value && (
-                      <Check className="w-5 h-5 text-primary" />
-                    )}
-                  </button>
-                ))}
-              </div>
-              {errors.debitFrequency && (
-                <p className="text-red-500 text-sm">{errors.debitFrequency}</p>
-              )}
-            </div>
-          )}
-
-          {/* Step 3: Financial Goals */}
-          {currentStep === 3 && (
-            <div className="space-y-6">
-              <div className="flex items-center gap-3 mb-8">
-                <div className="w-12 h-12 bg-accent/10 rounded-xl flex items-center justify-center">
-                  <Target className="w-6 h-6 text-accent" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-foreground">Your financial goals</h2>
-                  <p className="text-muted">Help us understand what matters most to you</p>
-                </div>
-              </div>
-
-              {/* Emergency Fund */}
+              {/* Frequency Selection */}
               <div>
                 <label className="block text-sm font-medium text-foreground mb-3">
-                  Do you have an emergency fund (3-6 months of expenses)?
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { value: true, label: "Yes, I do" },
-                    { value: false, label: "No, not yet" },
-                  ].map((option) => (
-                    <button
-                      key={String(option.value)}
-                      onClick={() => setHasEmergencyFund(option.value)}
-                      className={`p-4 border rounded-xl text-center transition-all ${
-                        hasEmergencyFund === option.value
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary/30"
-                      }`}
-                    >
-                      <p className="font-medium text-foreground">{option.label}</p>
-                    </button>
-                  ))}
-                </div>
-                {errors.hasEmergencyFund && (
-                  <p className="text-red-500 text-sm mt-1">{errors.hasEmergencyFund}</p>
-                )}
-              </div>
-
-              {hasEmergencyFund === false && (
-                <div className="p-4 bg-secondary/5 rounded-xl border border-secondary/20">
-                  <p className="text-sm text-foreground mb-2">
-                    💡 We recommend building an emergency fund first. How much would you like to save?
-                  </p>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted">₦</span>
-                    <input
-                      type="text"
-                      value={emergencyFundTarget}
-                      onChange={(e) => setEmergencyFundTarget(e.target.value.replace(/[^0-9]/g, ""))}
-                      placeholder="500,000"
-                      className="w-full pl-8 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Primary Goal */}
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-3">
-                  What&apos;s your primary financial goal?
+                  Select frequency
                 </label>
                 <div className="grid sm:grid-cols-2 gap-3">
                   {[
-                    {
-                      value: "build_savings",
-                      label: "Build Savings",
-                      desc: "Save for short-term goals",
-                      icon: PiggyBank,
-                    },
-                    {
-                      value: "grow_wealth",
-                      label: "Grow Wealth",
-                      desc: "Invest for long-term growth",
-                      icon: TrendingUp,
-                    },
-                    {
-                      value: "debt_free",
-                      label: "Become Debt-Free",
-                      desc: "Pay off loans faster",
-                      icon: ShieldCheck,
-                    },
-                    {
-                      value: "retirement",
-                      label: "Plan for Retirement",
-                      desc: "Secure my future",
-                      icon: Building,
-                    },
+                    { value: "DAILY", label: "Daily", desc: "Every day" },
+                    { value: "WEEKLY", label: "Weekly", desc: "Once a week" },
+                    { value: "MONTHLY", label: "Monthly", desc: "Once a month" },
+                    { value: "CUSTOM", label: "Custom", desc: "Custom schedule" },
                   ].map((option) => (
                     <button
                       key={option.value}
-                      onClick={() => setPrimaryGoal(option.value)}
+                      onClick={() => setFrequency(option.value as DebitFrequency)}
                       className={`p-4 border rounded-xl text-left transition-all ${
-                        primaryGoal === option.value
+                        frequency === option.value
                           ? "border-primary bg-primary/5"
                           : "border-border hover:border-primary/30"
                       }`}
                     >
-                      <option.icon
-                        className={`w-6 h-6 mb-2 ${
-                          primaryGoal === option.value ? "text-primary" : "text-muted"
-                        }`}
-                      />
                       <p className="font-medium text-foreground">{option.label}</p>
                       <p className="text-sm text-muted">{option.desc}</p>
                     </button>
                   ))}
                 </div>
-                {errors.primaryGoal && (
-                  <p className="text-red-500 text-sm mt-1">{errors.primaryGoal}</p>
+                {errors.frequency && (
+                  <p className="text-red-500 text-sm mt-1">{errors.frequency}</p>
+                )}
+              </div>
+
+              {/* Amount Per Frequency */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Amount per {frequency.toLowerCase()} debit
+                </label>
+                <p className="text-sm text-muted mb-3">
+                  How much should we debit during each {frequency.toLowerCase()} cycle?
+                </p>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted">₦</span>
+                  <input
+                    type="number"
+                    value={amountPerFrequency}
+                    onChange={(e) => setAmountPerFrequency(e.target.value)}
+                    placeholder={`e.g. ${frequency === "DAILY" ? "2,000" : frequency === "WEEKLY" ? "10,000" : "50,000"}`}
+                    className="w-full pl-8 pr-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  />
+                </div>
+                {errors.amountPerFrequency && (
+                  <p className="text-red-500 text-sm mt-1">{errors.amountPerFrequency}</p>
+                )}
+                {amountPerFrequency && (
+                  <p className="text-sm text-muted mt-2">
+                    That&apos;s {formatCurrency(parseFloat(amountPerFrequency) || 0)} per {frequency.toLowerCase()}
+                  </p>
                 )}
               </div>
             </div>
           )}
 
-          {/* Step 4: Risk Tolerance */}
-          {currentStep === 4 && (
-            <div className="space-y-6">
-              <div className="flex items-center gap-3 mb-8">
-                <div className="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-purple-500" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-foreground">Investment preferences</h2>
-                  <p className="text-muted">How comfortable are you with investment risk?</p>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {[
-                  {
-                    value: "conservative",
-                    label: "Conservative",
-                    desc: "Low risk, stable returns. Prefer savings and money market funds.",
-                    returns: "5-10% yearly",
-                    color: "text-secondary",
-                  },
-                  {
-                    value: "moderate",
-                    label: "Moderate",
-                    desc: "Balanced approach. Mix of stable and growth investments.",
-                    returns: "10-18% yearly",
-                    color: "text-primary",
-                  },
-                  {
-                    value: "aggressive",
-                    label: "Aggressive",
-                    desc: "Higher risk for higher returns. Stocks, equity funds, crypto.",
-                    returns: "18-30%+ yearly",
-                    color: "text-accent",
-                  },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => setRiskTolerance(option.value as RiskTolerance)}
-                    className={`w-full p-4 border rounded-xl text-left transition-all ${
-                      riskTolerance === option.value
-                        ? "border-primary bg-primary/5"
-                        : "border-border hover:border-primary/30"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-medium text-foreground">{option.label}</p>
-                        <p className="text-sm text-muted mt-1">{option.desc}</p>
-                      </div>
-                      <span className={`text-sm font-medium ${option.color}`}>
-                        {option.returns}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Step 5: Bucket Allocation */}
-          {currentStep === 5 && (
+          {/* Step 3: Bucket Allocation */}
+          {currentStep === 3 && (
             <div className="space-y-6">
               <div className="flex items-center gap-3 mb-8">
                 <div className="w-12 h-12 bg-pink-500/10 rounded-xl flex items-center justify-center">
@@ -646,7 +420,7 @@ export default function OnboardingPage() {
                 </div>
                 <div>
                   <h2 className="text-xl font-bold text-foreground">Allocate your buckets</h2>
-                  <p className="text-muted">Split {formatCurrency(parseFloat(monthlyAmount) || 0)} across your financial goals</p>
+                  <p className="text-muted">Split your debits across financial goals (must equal 100%)</p>
                 </div>
               </div>
 
@@ -680,10 +454,11 @@ export default function OnboardingPage() {
               {/* Bucket Sliders */}
               <div className="space-y-6">
                 {[
-                  { key: "savings", label: "Savings", icon: PiggyBank, color: "bg-primary" },
-                  { key: "investments", label: "Investments", icon: TrendingUp, color: "bg-secondary" },
-                  { key: "pensions", label: "Pensions", icon: Building, color: "bg-blue-500" },
-                  { key: "insurance", label: "Insurance", icon: Shield, color: "bg-teal-500" },
+                  { key: "savings", label: "Savings", icon: PiggyBank, color: "bg-primary", desc: "Emergency fund & short-term goals" },
+                  { key: "investments", label: "Investments", icon: TrendingUp, color: "bg-secondary", desc: "Stocks, funds & long-term growth" },
+                  { key: "spending", label: "Spending", icon: ShoppingBag, color: "bg-purple-500", desc: "Discretionary & lifestyle" },
+                  { key: "emergency", label: "Emergency Fund", icon: Shield, color: "bg-orange-500", desc: "6 months expenses reserve" },
+                  { key: "bills", label: "Bills", icon: Receipt, color: "bg-blue-500", desc: "Recurring payments & utilities" },
                 ].map((bucket) => (
                   <div key={bucket.key} className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -691,45 +466,52 @@ export default function OnboardingPage() {
                         <div className={`w-8 h-8 ${bucket.color} rounded-lg flex items-center justify-center`}>
                           <bucket.icon className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-medium text-foreground">{bucket.label}</span>
+                        <div>
+                          <span className="font-medium text-foreground">{bucket.label}</span>
+                          <p className="text-xs text-muted">{bucket.desc}</p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-muted text-sm">
-                          {formatCurrency(
-                            ((parseFloat(monthlyAmount) || 0) *
-                              bucketAllocation[bucket.key as keyof BucketAllocation]) /
-                              100
-                          )}
+                        <span className="text-lg font-bold text-foreground">
+                          {bucketAllocation[bucket.key as keyof BucketAllocation]}%
                         </span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={bucketAllocation[bucket.key as keyof BucketAllocation]}
-                          onChange={(e) =>
-                            updateBucket(
-                              bucket.key as keyof BucketAllocation,
-                              parseInt(e.target.value) || 0
-                            )
-                          }
-                          className="w-16 px-2 py-1 text-center border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-                        />
-                        <span className="text-foreground font-medium">%</span>
                       </div>
                     </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={bucketAllocation[bucket.key as keyof BucketAllocation]}
-                      onChange={(e) =>
-                        updateBucket(
-                          bucket.key as keyof BucketAllocation,
-                          parseInt(e.target.value)
-                        )
-                      }
-                      className="w-full accent-primary"
-                    />
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() =>
+                          updateBucket(
+                            bucket.key as keyof BucketAllocation,
+                            bucketAllocation[bucket.key as keyof BucketAllocation] - 5
+                          )
+                        }
+                        className="w-10 h-10 rounded-lg border border-border hover:bg-muted/10 flex items-center justify-center text-lg font-medium"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="5"
+                        value={bucketAllocation[bucket.key as keyof BucketAllocation]}
+                        onChange={(e) =>
+                          updateBucket(bucket.key as keyof BucketAllocation, parseInt(e.target.value))
+                        }
+                        className="flex-1 h-2 bg-border rounded-full appearance-none cursor-pointer accent-primary"
+                      />
+                      <button
+                        onClick={() =>
+                          updateBucket(
+                            bucket.key as keyof BucketAllocation,
+                            bucketAllocation[bucket.key as keyof BucketAllocation] + 5
+                          )
+                        }
+                        className="w-10 h-10 rounded-lg border border-border hover:bg-muted/10 flex items-center justify-center text-lg font-medium"
+                      >
+                        +
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -740,372 +522,364 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* Step 6: Notifications */}
-          {currentStep === 6 && (
+          {/* Step 4: Failure Handling */}
+          {currentStep === 4 && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-3 mb-8">
+                <div className="w-12 h-12 bg-orange-500/10 rounded-xl flex items-center justify-center">
+                  <Bell className="w-6 h-6 text-orange-500" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-foreground">If a debit fails</h2>
+                  <p className="text-muted">What should happen if a scheduled debit fails?</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {[
+                  {
+                    value: "RETRY",
+                    label: "Retry Later",
+                    desc: "We'll try again later when funds are available",
+                  },
+                  {
+                    value: "SKIP",
+                    label: "Skip & Continue",
+                    desc: "Skip this cycle and continue with the next scheduled debit",
+                  },
+                  {
+                    value: "NOTIFY",
+                    label: "Notify Only",
+                    desc: "Just send me a notification, I'll handle it manually",
+                  },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setFailureAction(option.value as "RETRY" | "SKIP" | "NOTIFY")}
+                    className={`w-full p-4 border rounded-xl text-left transition-all ${
+                      failureAction === option.value
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-primary/30"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-foreground">{option.label}</p>
+                        <p className="text-sm text-muted mt-1">{option.desc}</p>
+                      </div>
+                      {failureAction === option.value && (
+                        <Check className="w-5 h-5 text-primary" />
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 5: Date Range */}
+          {currentStep === 5 && (
             <div className="space-y-6">
               <div className="flex items-center gap-3 mb-8">
                 <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center">
-                  <Bell className="w-6 h-6 text-blue-500" />
+                  <Calendar className="w-6 h-6 text-blue-500" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-foreground">Notification preferences</h2>
-                  <p className="text-muted">Stay informed about your financial automations</p>
+                  <h2 className="text-xl font-bold text-foreground">Schedule dates</h2>
+                  <p className="text-muted">When should we start and stop pulling funds?</p>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                {[
-                  {
-                    key: "notifyOnDebit",
-                    label: "Notify me when debited",
-                    desc: "Get alerted when money is collected from your account",
-                    value: notifyOnDebit,
-                    setValue: setNotifyOnDebit,
-                  },
-                  {
-                    key: "notifyOnAllocation",
-                    label: "Notify me on allocations",
-                    desc: "Get alerted when money is distributed to your buckets",
-                    value: notifyOnAllocation,
-                    setValue: setNotifyOnAllocation,
-                  },
-                  {
-                    key: "weeklyReport",
-                    label: "Weekly summary report",
-                    desc: "Receive a weekly email with your financial summary",
-                    value: weeklyReport,
-                    setValue: setWeeklyReport,
-                  },
-                ].map((option) => (
-                  <div
-                    key={option.key}
-                    className="flex items-center justify-between p-4 border border-border rounded-xl"
-                  >
-                    <div>
-                      <p className="font-medium text-foreground">{option.label}</p>
-                      <p className="text-sm text-muted">{option.desc}</p>
-                    </div>
-                    <button
-                      onClick={() => option.setValue(!option.value)}
-                      className={`w-12 h-7 rounded-full transition-colors relative ${
-                        option.value ? "bg-primary" : "bg-border"
-                      }`}
-                    >
-                      <div
-                        className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-transform ${
-                          option.value ? "translate-x-6" : "translate-x-1"
-                        }`}
-                      />
-                    </button>
-                  </div>
-                ))}
+              {/* Start Date */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Start Date
+                </label>
+                <p className="text-sm text-muted mb-3">
+                  When should we start pulling funds from your account?
+                </p>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  min={new Date().toISOString().split("T")[0]}
+                  className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                />
+                {errors.startDate && (
+                  <p className="text-red-500 text-sm mt-1">{errors.startDate}</p>
+                )}
+              </div>
+
+              {/* End Date (Optional) */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  End Date <span className="text-muted font-normal">(optional)</span>
+                </label>
+                <p className="text-sm text-muted mb-3">
+                  When should we stop? Leave empty for no end date.
+                </p>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  min={startDate || new Date().toISOString().split("T")[0]}
+                  className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                />
+                {errors.endDate && (
+                  <p className="text-red-500 text-sm mt-1">{errors.endDate}</p>
+                )}
               </div>
 
               {/* Summary */}
-              <div className="mt-8 p-6 bg-primary/5 rounded-xl border border-primary/20">
-                <h3 className="font-semibold text-foreground mb-4">Your Rules Summary</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted">Monthly collection</span>
-                    <span className="font-medium text-foreground">
-                      {formatCurrency(parseFloat(monthlyAmount) || 0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">Debit timing</span>
-                    <span className="font-medium text-foreground capitalize">
-                      {debitFrequency.replace("_", " ")}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">Risk profile</span>
-                    <span className="font-medium text-foreground capitalize">{riskTolerance}</span>
-                  </div>
-                  <hr className="border-border my-2" />
-                  <div className="flex justify-between">
-                    <span className="text-muted">Savings</span>
-                    <span className="font-medium text-foreground">{bucketAllocation.savings}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">Investments</span>
-                    <span className="font-medium text-foreground">{bucketAllocation.investments}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">Pensions</span>
-                    <span className="font-medium text-foreground">{bucketAllocation.pensions}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">Insurance</span>
-                    <span className="font-medium text-foreground">{bucketAllocation.insurance}%</span>
-                  </div>
-                </div>
+              <div className="p-4 bg-primary/5 border border-primary/20 rounded-xl space-y-2">
+                <h3 className="font-medium text-foreground">Summary</h3>
+                <ul className="text-sm text-muted space-y-1">
+                  <li>• Monthly limit: {formatCurrency(parseFloat(monthlyMaxDebit) || 0)}</li>
+                  <li>• Per transaction: {formatCurrency(parseFloat(singleMaxDebit) || 0)}</li>
+                  <li>• Frequency: {frequency.charAt(0) + frequency.slice(1).toLowerCase()}</li>
+                  <li>• Amount: {formatCurrency(parseFloat(amountPerFrequency) || 0)} per {frequency.toLowerCase()}</li>
+                  <li>• Starting: {new Date(startDate).toLocaleDateString()}</li>
+                  {endDate && <li>• Ending: {new Date(endDate).toLocaleDateString()}</li>}
+                </ul>
               </div>
             </div>
           )}
 
-          {/* Step 7: Mandate Setup */}
-          {currentStep === 7 && (
+          {/* Step 6: Mandate Setup */}
+          {currentStep === 6 && (
             <div className="space-y-6">
-              <div className="text-center mb-8">
-                <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Check className="w-10 h-10 text-primary" />
+              <div className="flex items-center gap-3 mb-8">
+                <div className="w-12 h-12 bg-secondary/10 rounded-xl flex items-center justify-center">
+                  <FileCheck className="w-6 h-6 text-secondary" />
                 </div>
-                <h2 className="text-2xl font-bold text-foreground mb-2">
-                  Rules Activated! 🎉
-                </h2>
-                <p className="text-muted">
-                  Now let&apos;s set up how Kore will collect money from your account
-                </p>
+                <div>
+                  <h2 className="text-xl font-bold text-foreground">Authorize Direct Debit</h2>
+                  <p className="text-muted">Set up automatic debit from your bank account</p>
+                </div>
               </div>
 
-              <div className="bg-accent/10 border border-accent/20 rounded-xl p-4 mb-6">
-                <p className="text-sm text-foreground">
-                  <strong>Why set up a mandate?</strong> A mandate allows Kore to automatically 
-                  debit your account based on your rules. This ensures your savings and investments 
-                  happen consistently without you having to remember.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                {/* Direct Debit Option */}
-                <button
-                  onClick={() => setMandateType("direct_debit")}
-                  className={`w-full p-5 rounded-xl border-2 text-left transition-all ${
-                    mandateType === "direct_debit"
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                      mandateType === "direct_debit" ? "bg-primary text-white" : "bg-muted/10"
-                    }`}>
-                      <Landmark className="w-6 h-6" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-foreground">Direct Debit Mandate</h3>
-                        <span className="px-2 py-0.5 bg-secondary/10 text-secondary text-xs font-medium rounded-full">
-                          Recommended
-                        </span>
-                      </div>
-                      <p className="text-sm text-muted mt-1">
-                        Link your bank account for seamless automatic debits. Most reliable option.
-                      </p>
-                      <div className="flex items-center gap-4 mt-3 text-xs text-muted">
-                        <span className="flex items-center gap-1">
-                          <Check className="w-3 h-3 text-secondary" /> No failed transactions
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Check className="w-3 h-3 text-secondary" /> Bank-level security
-                        </span>
-                      </div>
-                    </div>
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                      mandateType === "direct_debit" ? "border-primary bg-primary" : "border-muted"
-                    }`}>
-                      {mandateType === "direct_debit" && <Check className="w-4 h-4 text-white" />}
-                    </div>
+              {/* Rules saved successfully */}
+              <div className="p-4 bg-secondary/5 border border-secondary/20 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-secondary" />
+                  <div>
+                    <p className="font-medium text-foreground">Savings rules saved!</p>
+                    <p className="text-sm text-muted">Now authorize automatic debits from your account.</p>
                   </div>
-                </button>
+                </div>
+              </div>
 
-                {/* Direct Debit Form */}
-                {mandateType === "direct_debit" && (
-                  <div className="ml-16 space-y-4 p-4 bg-background rounded-xl border border-border animate-in slide-in-from-top-2">
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">
-                        Select Bank
-                      </label>
-                      <select
-                        value={selectedBank}
-                        onChange={(e) => setSelectedBank(e.target.value)}
-                        className="w-full p-3 rounded-xl border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-                      >
-                        <option value="">Choose your bank</option>
-                        <option value="access">Access Bank</option>
-                        <option value="gtb">GTBank</option>
-                        <option value="firstbank">First Bank</option>
-                        <option value="uba">UBA</option>
-                        <option value="zenith">Zenith Bank</option>
-                        <option value="kuda">Kuda Bank</option>
-                        <option value="opay">OPay</option>
-                        <option value="palmpay">PalmPay</option>
-                        <option value="moniepoint">Moniepoint</option>
-                        <option value="sterling">Sterling Bank</option>
-                        <option value="fcmb">FCMB</option>
-                        <option value="fidelity">Fidelity Bank</option>
-                        <option value="wema">Wema Bank</option>
-                        <option value="stanbic">Stanbic IBTC</option>
-                        <option value="union">Union Bank</option>
-                      </select>
+              {/* API Error */}
+              {apiError && (
+                <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 text-red-500" />
+                    <p className="text-sm text-red-500">{apiError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Mandate not created yet */}
+              {!mandateCreated && !mandate && (
+                <div className="space-y-4">
+                  <div className="p-6 bg-background border border-border rounded-xl text-center">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <FileCheck className="w-8 h-8 text-primary" />
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">
-                        Account Number
-                      </label>
-                      <input
-                        type="text"
-                        value={accountNumber}
-                        onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                        placeholder="Enter 10-digit account number"
-                        className="w-full p-3 rounded-xl border border-border bg-card text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
-                      />
-                    </div>
-                    {errors.mandate && (
-                      <p className="text-sm text-red-500">{errors.mandate}</p>
-                    )}
-                    <p className="text-xs text-muted">
-                      You&apos;ll be redirected to your bank to authorize the mandate
+                    <h3 className="font-semibold text-foreground mb-2">Create Direct Debit Mandate</h3>
+                    <p className="text-muted text-sm mb-6 max-w-md mx-auto">
+                      This authorizes Kore to automatically debit your bank account according to your 
+                      savings rules. You&apos;ll be redirected to your bank to confirm.
                     </p>
+                    <button
+                      onClick={handleCreateMandate}
+                      disabled={isSubmitting}
+                      className="px-6 py-3 bg-primary text-white font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 inline-flex items-center gap-2"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        <>
+                          <FileCheck className="w-4 h-4" />
+                          Create Mandate
+                        </>
+                      )}
+                    </button>
                   </div>
-                )}
 
-                {/* Card Option */}
-                <button
-                  onClick={() => setMandateType("card")}
-                  className={`w-full p-5 rounded-xl border-2 text-left transition-all ${
-                    mandateType === "card"
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                      mandateType === "card" ? "bg-primary text-white" : "bg-muted/10"
-                    }`}>
-                      <CreditCard className="w-6 h-6" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-foreground">Card Authorization</h3>
-                      <p className="text-sm text-muted mt-1">
-                        Use your debit card for recurring charges. Quick setup but may have higher failure rates.
-                      </p>
-                      <div className="flex items-center gap-4 mt-3 text-xs text-muted">
-                        <span className="flex items-center gap-1">
-                          <Smartphone className="w-3 h-3" /> Works with all cards
-                        </span>
+                  <button
+                    onClick={handleSkipMandate}
+                    className="w-full text-center text-muted hover:text-foreground text-sm py-2"
+                  >
+                    Skip for now - I&apos;ll do this later
+                  </button>
+                </div>
+              )}
+
+              {/* Mandate created - pending activation */}
+              {(mandateCreated || mandate) && mandate?.status === "PENDING" && mandate?.activation_url && (
+                <div className="space-y-4">
+                  <div className="p-6 bg-accent/5 border border-accent/20 rounded-xl">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 bg-accent/10 rounded-xl flex items-center justify-center shrink-0">
+                        <ExternalLink className="w-6 h-6 text-accent" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-foreground mb-1">Complete Bank Authorization</h3>
+                        <p className="text-muted text-sm mb-4">
+                          Click the button below to authorize the direct debit on your bank&apos;s platform. 
+                          Once complete, return here and click &quot;Refresh Status&quot;.
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          <a
+                            href={mandate.activation_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white font-medium rounded-xl hover:bg-primary/90 transition-colors"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                            Open Bank Portal
+                          </a>
+                          <button
+                            onClick={handleRefreshMandateStatus}
+                            disabled={isPolling}
+                            className="inline-flex items-center gap-2 px-4 py-2 border border-border rounded-xl font-medium text-foreground hover:bg-muted/10 transition-colors disabled:opacity-50"
+                          >
+                            {isPolling ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Checking...
+                              </>
+                            ) : (
+                              "Refresh Status"
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                      mandateType === "card" ? "border-primary bg-primary" : "border-muted"
-                    }`}>
-                      {mandateType === "card" && <Check className="w-4 h-4 text-white" />}
-                    </div>
                   </div>
-                </button>
 
-                {/* Card form hint */}
-                {mandateType === "card" && (
-                  <div className="ml-16 p-4 bg-background rounded-xl border border-border animate-in slide-in-from-top-2">
-                    <p className="text-sm text-muted">
-                      You&apos;ll be redirected to a secure payment page to authorize your card.
+                  <button
+                    onClick={handleFinish}
+                    className="w-full text-center text-muted hover:text-foreground text-sm py-2"
+                  >
+                    I&apos;ll complete activation later
+                  </button>
+                </div>
+              )}
+
+              {/* Mandate is active */}
+              {mandate?.status === "ACTIVE" && (
+                <div className="space-y-4">
+                  <div className="p-6 bg-secondary/5 border border-secondary/20 rounded-xl text-center">
+                    <div className="w-16 h-16 bg-secondary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <CheckCircle2 className="w-8 h-8 text-secondary" />
+                    </div>
+                    <h3 className="font-semibold text-foreground mb-2">Mandate Activated!</h3>
+                    <p className="text-muted text-sm mb-6">
+                      Your direct debit is now active. Kore will automatically save money 
+                      according to your rules.
                     </p>
+                    <button
+                      onClick={handleFinish}
+                      className="px-6 py-3 bg-primary text-white font-medium rounded-xl hover:bg-primary/90 transition-colors inline-flex items-center gap-2"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                      Go to Dashboard
+                    </button>
                   </div>
-                )}
+                </div>
+              )}
 
-                {/* Skip Option */}
-                <button
-                  onClick={() => setMandateType("skip")}
-                  className={`w-full p-5 rounded-xl border-2 text-left transition-all ${
-                    mandateType === "skip"
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                      mandateType === "skip" ? "bg-primary text-white" : "bg-muted/10"
-                    }`}>
-                      <ArrowRight className="w-6 h-6" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-foreground">Skip for Now</h3>
-                      <p className="text-sm text-muted mt-1">
-                        Set up payment method later. You won&apos;t be able to use auto-debit features until you do.
-                      </p>
-                    </div>
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                      mandateType === "skip" ? "border-primary bg-primary" : "border-muted"
-                    }`}>
-                      {mandateType === "skip" && <Check className="w-4 h-4 text-white" />}
+              {/* Mandate failed */}
+              {mandate?.status === "FAILED" && (
+                <div className="space-y-4">
+                  <div className="p-6 bg-red-500/5 border border-red-500/20 rounded-xl">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 bg-red-500/10 rounded-xl flex items-center justify-center shrink-0">
+                        <AlertCircle className="w-6 h-6 text-red-500" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-foreground mb-1">Mandate Creation Failed</h3>
+                        <p className="text-muted text-sm mb-4">
+                          We couldn&apos;t create your direct debit mandate. This might be due to a 
+                          temporary issue with your bank.
+                        </p>
+                        <button
+                          onClick={handleCreateMandate}
+                          disabled={isSubmitting}
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Retrying...
+                            </>
+                          ) : (
+                            "Try Again"
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
+
+                  <button
+                    onClick={handleSkipMandate}
+                    className="w-full text-center text-muted hover:text-foreground text-sm py-2"
+                  >
+                    Skip for now
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Navigation Buttons */}
+          {currentStep < 6 && (
+            <div className="flex items-center justify-between mt-8 pt-6 border-t border-border">
+              {currentStep > 1 ? (
+                <button
+                  onClick={handleBack}
+                  className="flex items-center gap-2 px-4 py-2 text-muted hover:text-foreground transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
                 </button>
-              </div>
+              ) : (
+                <div />
+              )}
 
-              {/* Continue Button for Step 7 */}
-              <div className="pt-6">
+              {currentStep < 5 ? (
                 <button
-                  onClick={handleMandateSetup}
-                  disabled={!mandateType || isSettingUpMandate}
-                  className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-dark text-white px-6 py-4 rounded-xl font-semibold transition-colors disabled:opacity-50"
+                  onClick={handleNext}
+                  className="flex items-center gap-2 px-6 py-3 bg-primary text-white font-medium rounded-xl hover:bg-primary/90 transition-colors"
                 >
-                  {isSettingUpMandate ? (
+                  Continue
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || totalAllocation !== 100}
+                  className="flex items-center gap-2 px-6 py-3 bg-primary text-white font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? (
                     <>
-                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Setting up...
-                    </>
-                  ) : mandateType === "skip" ? (
-                    <>
-                      Continue to Dashboard
-                      <ArrowRight className="w-5 h-5" />
-                    </>
-                  ) : mandateType === "card" ? (
-                    <>
-                      Continue to Payment
-                      <ExternalLink className="w-5 h-5" />
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
                     </>
                   ) : (
                     <>
-                      Set Up Direct Debit
-                      <ExternalLink className="w-5 h-5" />
+                      <ArrowRight className="w-4 h-4" />
+                      Save & Continue
                     </>
                   )}
                 </button>
-              </div>
+              )}
             </div>
-          )}
-
-          {/* Navigation */}
-          {currentStep < 7 && (
-          <div className="flex items-center justify-between mt-8 pt-6 border-t border-border">
-            {currentStep > 1 ? (
-              <button
-                onClick={handleBack}
-                className="flex items-center gap-2 px-4 py-2 text-muted hover:text-foreground transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-                Back
-              </button>
-            ) : (
-              <div />
-            )}
-
-            {currentStep < 6 ? (
-              <button
-                onClick={handleNext}
-                className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white px-6 py-3 rounded-xl font-semibold transition-colors"
-              >
-                Continue
-                <ArrowRight className="w-5 h-5" />
-              </button>
-            ) : (
-              <button
-                onClick={handleSubmit}
-                disabled={isSubmitting || totalAllocation !== 100}
-                className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white px-6 py-3 rounded-xl font-semibold transition-colors disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <>
-                    Activate My Rules
-                    <Check className="w-5 h-5" />
-                  </>
-                )}
-              </button>
-            )}
-          </div>
           )}
         </div>
       </main>

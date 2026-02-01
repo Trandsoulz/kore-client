@@ -18,6 +18,7 @@ import {
   CreditCard,
   FileText,
   Share2,
+  Loader2,
 } from "lucide-react";
 import { useTransactionsStore, Transaction } from "@/app/store/transactions";
 
@@ -29,7 +30,7 @@ const formatCurrency = (value: number) => {
   }).format(value);
 };
 
-const statusConfig = {
+const statusConfig: Record<string, { label: string; icon: typeof CheckCircle2; color: string; bg: string }> = {
   completed: {
     label: "Completed",
     icon: CheckCircle2,
@@ -41,6 +42,12 @@ const statusConfig = {
     icon: Clock,
     color: "text-accent",
     bg: "bg-accent/10",
+  },
+  processing: {
+    label: "Processing",
+    icon: Clock,
+    color: "text-blue-500",
+    bg: "bg-blue-500/10",
   },
   failed: {
     label: "Failed",
@@ -61,17 +68,32 @@ const bucketLabels: Record<string, { label: string; color: string }> = {
 export default function TransactionDetailsPage() {
   const params = useParams();
   const router = useRouter();
-  const { getTransactionByRef } = useTransactionsStore();
+  const { getTransactionByRef, fetchTransactionByRef, isLoading } = useTransactionsStore();
   const [transaction, setTransaction] = useState<Transaction | null>(null);
   const [copied, setCopied] = useState(false);
+  const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    const ref = params.ref as string;
-    const tx = getTransactionByRef(ref);
-    if (tx) {
-      setTransaction(tx);
-    }
-  }, [params.ref, getTransactionByRef]);
+    const loadTransaction = async () => {
+      const ref = params.ref as string;
+      
+      // First try to get from store
+      let tx: Transaction | null | undefined = getTransactionByRef(ref);
+      
+      // If not found, fetch from API
+      if (!tx) {
+        tx = await fetchTransactionByRef(ref);
+      }
+      
+      if (tx) {
+        setTransaction(tx);
+      } else {
+        setNotFound(true);
+      }
+    };
+    
+    loadTransaction();
+  }, [params.ref, getTransactionByRef, fetchTransactionByRef]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -79,7 +101,20 @@ export default function TransactionDetailsPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (!transaction) {
+  // Loading state
+  if (isLoading && !transaction) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <Loader2 className="w-10 h-10 text-primary animate-spin mx-auto mb-6" />
+          <p className="text-muted">Loading transaction details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not found state
+  if (notFound || !transaction) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
@@ -103,9 +138,9 @@ export default function TransactionDetailsPage() {
     );
   }
 
-  const status = statusConfig[transaction.status];
+  const status = statusConfig[transaction.status] || statusConfig.pending;
   const StatusIcon = status.icon;
-  const bucket = bucketLabels[transaction.bucket];
+  const bucket = bucketLabels[transaction.bucket] || { label: transaction.bucket, color: "text-foreground" };
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">

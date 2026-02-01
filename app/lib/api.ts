@@ -284,3 +284,274 @@ export const banksApi = {
     return response.banks || [];
   },
 };
+
+// ===== RULES ENGINE API =====
+
+export type Frequency = "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM";
+export type FailureAction = "RETRY" | "SKIP" | "NOTIFY";
+export type BucketType = "SAVINGS" | "INVESTMENTS" | "BILLS" | "EMERGENCY" | "SPENDING" | "CUSTOM";
+
+export interface BucketAllocation {
+  bucket: BucketType;
+  custom_bucket_name?: string;
+  percentage: number;
+}
+
+export interface DebitRuleRequest {
+  monthly_max_debit: number;
+  single_max_debit: number;
+  frequency: Frequency;
+  amount_per_frequency: number;
+  allocations: BucketAllocation[];
+  failure_action: FailureAction;
+  start_date: string; // YYYY-MM-DD
+  end_date?: string | null;
+}
+
+export interface DebitRuleResponse {
+  id: number;
+  monthly_max_debit: string;
+  single_max_debit: string;
+  frequency: Frequency;
+  amount_per_frequency: string;
+  allocations: BucketAllocation[];
+  failure_action: FailureAction;
+  start_date: string;
+  end_date: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const rulesApi = {
+  // Get active debit rule
+  getActiveRule: async (): Promise<DebitRuleResponse | null> => {
+    try {
+      return await apiFetch<DebitRuleResponse>("/rules-engine/");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  // Create new debit rule
+  createRule: async (data: DebitRuleRequest): Promise<DebitRuleResponse> => {
+    return apiFetch<DebitRuleResponse>("/rules-engine/", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Update active debit rule
+  updateRule: async (data: Partial<DebitRuleRequest>): Promise<DebitRuleResponse> => {
+    return apiFetch<DebitRuleResponse>("/rules-engine/", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Deactivate active debit rule
+  deactivateRule: async (): Promise<{ detail: string }> => {
+    return apiFetch<{ detail: string }>("/rules-engine/", {
+      method: "DELETE",
+    });
+  },
+
+  // Get all rules history
+  getRulesHistory: async (): Promise<DebitRuleResponse[]> => {
+    return apiFetch<DebitRuleResponse[]>("/rules-engine/history/");
+  },
+};
+
+// ===== TRANSACTIONS API =====
+
+export type TransactionType = "DEBIT" | "CREDIT" | "REVERSAL";
+export type TransactionStatus = "PENDING" | "PROCESSING" | "SUCCESSFUL" | "FAILED" | "REVERSED";
+
+export interface Transaction {
+  id: number;
+  reference: string;
+  transaction_type: TransactionType;
+  status: TransactionStatus;
+  amount: string;
+  bucket: BucketType | "";
+  bucket_display: string | null;
+  custom_bucket_name: string;
+  description: string;
+  narration: string;
+  request_ref: string;
+  provider_reference: string;
+  failure_reason: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface TransactionListItem {
+  id: number;
+  reference: string;
+  transaction_type: TransactionType;
+  status: TransactionStatus;
+  amount: string;
+  bucket: BucketType | "";
+  bucket_display: string | null;
+  description: string;
+  created_at: string;
+}
+
+export interface TransactionListResponse {
+  count: number;
+  limit: number;
+  offset: number;
+  results: TransactionListItem[];
+}
+
+export interface TransactionSummary {
+  period: string;
+  total_debited: string;
+  total_credited: string;
+  transaction_count: number;
+  by_bucket: Record<string, { total: number; count: number }>;
+  by_status: Record<string, number>;
+}
+
+export interface TransactionFilters {
+  status?: TransactionStatus;
+  type?: TransactionType;
+  bucket?: BucketType;
+  limit?: number;
+  offset?: number;
+}
+
+export const transactionsApi = {
+  // Get list of transactions
+  getTransactions: async (filters?: TransactionFilters): Promise<TransactionListResponse> => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append("status", filters.status);
+    if (filters?.type) params.append("type", filters.type);
+    if (filters?.bucket) params.append("bucket", filters.bucket);
+    if (filters?.limit) params.append("limit", String(filters.limit));
+    if (filters?.offset) params.append("offset", String(filters.offset));
+    
+    const queryString = params.toString();
+    const endpoint = queryString ? `/transactions/?${queryString}` : "/transactions/";
+    
+    return apiFetch<TransactionListResponse>(endpoint);
+  },
+
+  // Get single transaction by reference
+  getTransaction: async (reference: string): Promise<Transaction> => {
+    return apiFetch<Transaction>(`/transactions/${reference}/`);
+  },
+
+  // Get transaction summary/analytics
+  getSummary: async (period?: "today" | "week" | "month" | "year" | "all"): Promise<TransactionSummary> => {
+    const endpoint = period ? `/transactions/summary/?period=${period}` : "/transactions/summary/";
+    return apiFetch<TransactionSummary>(endpoint);
+  },
+};
+
+// ==================== MANDATE API ====================
+
+export type MandateStatus = "PENDING" | "ACTIVE" | "CANCELLED" | "FAILED" | "EXPIRED";
+
+export interface Mandate {
+  id: number;
+  status: MandateStatus;
+  mandate_reference: string | null;
+  subscription_id: string | null;
+  request_ref: string;
+  activation_url: string | null;
+  created_at: string;
+  cancelled_at: string | null;
+  provider_response_code: string | null;
+}
+
+export interface MandateCreateResponse {
+  id: number;
+  status: MandateStatus;
+  request_ref: string;
+  activation_url: string | null;
+}
+
+export const mandateApi = {
+  /**
+   * Create a new mandate for the authenticated user.
+   * Requires: completed profile and active rules engine.
+   * Returns activation URL for user to authorize the mandate.
+   */
+  create: async (): Promise<MandateCreateResponse> => {
+    return apiFetch<MandateCreateResponse>("/mandates/create/", {
+      method: "POST",
+    });
+  },
+
+  /**
+   * Get the user's current/latest mandate.
+   * Used to check mandate status and display in settings.
+   */
+  getMyMandate: async (): Promise<Mandate> => {
+    return apiFetch<Mandate>("/mandates/me/");
+  },
+
+  /**
+   * Cancel the user's active mandate.
+   * Stops all future automated debits.
+   */
+  cancel: async (): Promise<{ message: string; mandate_status: string }> => {
+    return apiFetch<{ message: string; mandate_status: string }>("/mandates/cancel/", {
+      method: "POST",
+    });
+  },
+
+  /**
+   * Poll mandate status until it changes from PENDING.
+   * Useful after user completes activation URL flow.
+   * 
+   * @param intervalMs - Polling interval in milliseconds (default 3000)
+   * @param maxAttempts - Maximum polling attempts (default 20)
+   * @returns Promise that resolves when status changes or rejects on timeout
+   */
+  pollStatus: async (
+    intervalMs: number = 3000,
+    maxAttempts: number = 20
+  ): Promise<Mandate> => {
+    let attempts = 0;
+    
+    return new Promise((resolve, reject) => {
+      const poll = async () => {
+        attempts++;
+        
+        try {
+          const mandate = await mandateApi.getMyMandate();
+          
+          // If status is no longer PENDING, we're done
+          if (mandate.status !== "PENDING") {
+            resolve(mandate);
+            return;
+          }
+          
+          // Check if we've exhausted attempts
+          if (attempts >= maxAttempts) {
+            reject(new Error("Mandate activation timeout. Please try again."));
+            return;
+          }
+          
+          // Continue polling
+          setTimeout(poll, intervalMs);
+        } catch (error) {
+          // If 404, mandate doesn't exist yet - keep polling
+          if (error instanceof ApiError && error.status === 404 && attempts < maxAttempts) {
+            setTimeout(poll, intervalMs);
+            return;
+          }
+          reject(error);
+        }
+      };
+      
+      // Start polling
+      poll();
+    });
+  },
+};

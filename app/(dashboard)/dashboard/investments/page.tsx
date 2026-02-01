@@ -60,8 +60,8 @@ export default function InvestmentsPage() {
   const investmentPartners = partners.filter((p) => p.type === "investments");
   const connectedPartners = investmentPartners.filter((p) => p.connected);
 
-  const monthlyAllocation = rules
-    ? (rules.monthlyAmount * rules.bucketAllocation.investments) / 100
+  const monthlyAllocation = rules?.amountPerFrequency && rules?.bucketAllocation?.investments
+    ? (rules.amountPerFrequency * rules.bucketAllocation.investments) / 100
     : 0;
 
   const riskProfile = rules?.riskTolerance || "moderate";
