@@ -99,6 +99,16 @@ export default function OnboardingPage() {
   const validateStep = (step: number): boolean => {
     const newErrors: Record<string, string> = {};
 
+    console.log("Validating step", step, {
+      monthlyMaxDebit,
+      singleMaxDebit,
+      frequency,
+      amountPerFrequency,
+      totalAllocation,
+      startDate,
+      endDate,
+    });
+
     switch (step) {
       case 1: // Debit Limits
         if (!monthlyMaxDebit || parseFloat(monthlyMaxDebit) <= 0) {
@@ -147,6 +157,7 @@ export default function OnboardingPage() {
     }
 
     setErrors(newErrors);
+    console.log("Validation errors:", newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
