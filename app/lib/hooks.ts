@@ -17,11 +17,14 @@ export function useBanks() {
     try {
       setIsLoading(true);
       const data = await banksApi.getBanks();
+      console.log("Banks API response:", data);
+      console.log("Number of banks loaded:", Array.isArray(data) ? data.length : 0);
       setBanks(data);
       setError(null);
     } catch (err) {
-      setError("Failed to load banks");
       console.error("Failed to fetch banks:", err);
+      console.error("Full error object:", JSON.stringify(err, null, 2));
+      setError("Failed to load banks");
     } finally {
       setIsLoading(false);
     }
