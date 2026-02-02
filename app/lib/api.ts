@@ -327,7 +327,9 @@ export const rulesApi = {
   // Get active debit rule
   getActiveRule: async (): Promise<DebitRuleResponse | null> => {
     try {
-      return await apiFetch<DebitRuleResponse>("/rules-engine/");
+      return await apiFetch<DebitRuleResponse>("/rules-engine/", {
+        method: "GET",
+      });
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
         return null;
@@ -361,7 +363,9 @@ export const rulesApi = {
 
   // Get all rules history
   getRulesHistory: async (): Promise<DebitRuleResponse[]> => {
-    return apiFetch<DebitRuleResponse[]>("/rules-engine/history/");
+    return apiFetch<DebitRuleResponse[]>("/rules-engine/history/", {
+      method: "GET",
+    });
   },
 };
 
